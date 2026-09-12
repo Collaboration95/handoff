@@ -98,6 +98,9 @@
     .fact { display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-top: 1px solid var(--rule); }
     .fact strong.changed { color: var(--blue); }
     .checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .baseline-failures { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--rule); }
+    .baseline-failures[hidden] { display: none; }
+    .baseline-failures .checks { margin-top: 10px; }
     .check { border: 1px solid var(--rule); border-radius: 4px; padding: 10px; display: flex; gap: 9px; align-items: start; }
     .check.pass .dot { background: var(--success); margin-top: 6px; }
     .check.fail .dot { background: var(--danger); margin-top: 6px; }
@@ -164,7 +167,13 @@
 
         <section class="panel" aria-labelledby="checks-title">
           <div class="panel-head"><div><h2 id="checks-title">Field checks</h2><div class="muted">Every financial field must match source evidence</div></div></div>
-          <div class="panel-body"><div class="checks" id="checks"><div class="empty">Approve the workflow to run checks.</div></div></div>
+          <div class="panel-body">
+            <div class="checks" id="checks"><div class="empty">Approve the workflow to run checks.</div></div>
+            <details class="baseline-failures" id="baseline-failures" hidden>
+              <summary id="baseline-failures-summary">Original proposal failed checks</summary>
+              <div class="checks" id="baseline-failures-list"></div>
+            </details>
+          </div>
         </section>
 
         <section class="panel" aria-labelledby="result-title">
@@ -285,6 +294,7 @@
         : decision?.baseline ? "Actual upstream baseline" : "Generated only after approval";
       $("selected-label").textContent = decision?.selected ? (decision.status === "repaired" ? "Repaired and verified" : "Verified without changes") : "No verified invoice yet";
       renderChecks(selectedGate(decision));
+      renderBaselineFailures(decision);
       renderEvidence(p);
       const labels = { pending: "Awaiting approval", checking: "Checking evidence", ready: "Ready for sandbox draft", needs_review: "Needs review", creating: "Creating sandbox draft", completed: "Draft created and readback verified", failed: "Draft not fully verified", cancelled: "Proposal cancelled" };
       const stateEl = $("proposal-state"); stateEl.className = `state ${p.status === "completed" || p.status === "ready" ? "success" : p.status === "failed" || p.status === "cancelled" || p.status === "needs_review" ? "danger" : ""}`;
@@ -303,13 +313,26 @@
       const container = $("checks"); container.replaceChildren();
       if (!gate) { const empty = document.createElement("div"); empty.className = "empty"; empty.textContent = "Approve the workflow to run checks."; container.append(empty); return; }
       (gate.checks || []).forEach(item => {
-        const card = document.createElement("div"); card.className = `check ${item.passed ? "pass" : "fail"}`;
-        const dot = document.createElement("span"); dot.className = "dot"; dot.setAttribute("aria-hidden", "true");
-        const text = document.createElement("div"); const title = document.createElement("strong"); title.textContent = `${item.rule}: ${item.passed ? "Pass" : "Check failed"}`;
-        const detail = document.createElement("div"); detail.className = "muted small"; detail.textContent = `Expected ${item.expected}; received ${item.actual}. Evidence: ${(item.evidence_ids || []).join(", ") || "policy"}.`;
-        text.append(title, detail); card.append(dot, text); container.append(card);
+        container.append(checkCard(item));
       });
       (gate.review_reasons || []).forEach(reason => { const card = document.createElement("div"); card.className = "check fail"; card.textContent = reason; container.append(card); });
+    }
+    function checkCard(item) {
+      const card = document.createElement("div"); card.className = `check ${item.passed ? "pass" : "fail"}`;
+      const dot = document.createElement("span"); dot.className = "dot"; dot.setAttribute("aria-hidden", "true");
+      const text = document.createElement("div"); const title = document.createElement("strong"); title.textContent = `${item.rule}: ${item.passed ? "Pass" : "Check failed"}`;
+      const detail = document.createElement("div"); detail.className = "muted small"; detail.textContent = `Expected ${item.expected}; received ${item.actual}. Evidence: ${(item.evidence_ids || []).join(", ") || "policy"}.`;
+      text.append(title, detail); card.append(dot, text); return card;
+    }
+    function renderBaselineFailures(decision) {
+      const details = $("baseline-failures");
+      const list = $("baseline-failures-list");
+      list.replaceChildren();
+      const failures = (decision?.baseline_checks?.checks || []).filter(item => !item.passed);
+      details.hidden = failures.length === 0;
+      if (!failures.length) { details.open = false; return; }
+      $("baseline-failures-summary").textContent = `Original proposal: ${failures.length} failed ${failures.length === 1 ? "check" : "checks"}`;
+      failures.forEach(item => list.append(checkCard(item)));
     }
     function renderEvidence(p) {
       const box = $("run-evidence"); box.replaceChildren();

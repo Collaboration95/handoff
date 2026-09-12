@@ -10,6 +10,8 @@ The server owns proposal IDs and immutable request snapshots. A fresh proposal c
 
 A proposal cannot be replaced while its checks or external creation are in progress; the API returns `409 proposal_in_progress` before mutating state. Two held-await concurrency tests cover both phases. During those phases the UI also disables the case and fault-injection selectors. For repaired decisions the field-check panel resolves the gate belonging to the selected candidate, while the original invoice remains explicitly labelled as an injected controlled test when that mode is active.
 
+Voice heartbeat timestamps refresh on every call, but identical five-second heartbeats no longer append duplicate activity. Only changes to connection, room, human microphone count, or error state produce a new event, keeping invoice verification visible in the recent timeline. Repaired decisions show the selected passing gate as the primary checks and preserve the original failures in a collapsed, counted disclosure.
+
 ## API contract
 
 - `POST /v1/proposals` accepts `{objective, case_name="showcase", fault_injection=false}` and returns a Proposal.
@@ -46,7 +48,7 @@ Focused API result after implementation:
 
 ```text
 PYTHONPATH=finance .venv/bin/pytest finance/tests/test_api.py -q
-15 passed
+16 passed
 ```
 
 Full finance suite after integration with tracing and voice:

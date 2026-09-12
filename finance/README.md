@@ -55,7 +55,7 @@ All JSON inputs reject unknown fields.
 - `POST /v1/invoices/create` accepts only `{proposal_id: string}`. It requires the current server-owned, human-approved, verified selection; revalidates the stored request and draft; and calls the journaled Airwallex adapter. Repeated calls return the current terminal result. A known successful, partial, or uncertain write reserves its billing reference across later proposal IDs.
 - `POST /v1/improve` accepts the strict full `InvoiceRequest` contract for direct platform demos, stores a new immutable server-owned proposal/decision ID, marks that direct workflow approved, and returns the proposal.
 - `GET /v1/activity` returns `{current_status, current_proposal_id, events}`. Events contain IDs, proposal IDs, types, safe messages, and UTC timestamps.
-- `POST /v1/voice/status` accepts `{connected, room_name, human_microphones, model, error}`. `GET /health` and `GET /v1/health` mark this heartbeat stale and disconnected after 15 seconds.
+- `POST /v1/voice/status` accepts `{connected, room_name, human_microphones, model, error}`. Every heartbeat refreshes service health; activity is added only when connection, room, microphone count, or error state changes. `GET /health` and `GET /v1/health` mark the heartbeat stale and disconnected after 15 seconds.
 - `GET /v1/cases` lists the synthetic fixtures. `GET /v1/evaluation/latest` returns the latest recorded report or an explicit `{available:false, report:null, error}` empty state.
 - `POST /v1/demo/setup` verifies or creates the synthetic sandbox customer and product and returns their IDs.
 

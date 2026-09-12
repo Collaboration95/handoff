@@ -381,6 +381,43 @@ def test_health_reports_missing_services_and_voice_heartbeat_staleness_without_5
     assert stale["stale"] is True
 
 
+def test_repeated_voice_heartbeats_refresh_health_without_burying_operation_events() -> None:
+    api, _ = client()
+    proposal = api.post(
+        "/v1/proposals",
+        json={"objective": "Create invoice", "case_name": "showcase", "fault_injection": True},
+    ).json()
+    api.post(f"/v1/proposals/{proposal['id']}/approve")
+    api.post("/v1/invoices/create", json={"proposal_id": proposal["id"]})
+    heartbeat = {
+        "connected": True,
+        "room_name": "handoff-finance",
+        "human_microphones": 2,
+        "model": "gpt-realtime",
+        "error": None,
+    }
+
+    api.post("/v1/voice/status", json=heartbeat)
+    first_update = api.app.state.finance.voice_updated_at
+    api.app.state.finance.voice_updated_at -= 10
+    for _ in range(12):
+        assert api.post("/v1/voice/status", json=heartbeat).status_code == 200
+
+    activity = api.get("/v1/activity").json()
+    event_types = [event["type"] for event in activity["events"]]
+    health = api.get("/health").json()["services"]["livekit"]
+
+    assert event_types.count("voice_connected") == 1
+    assert event_types[-2:] == ["invoice_verified", "voice_connected"]
+    assert api.app.state.finance.voice_updated_at > first_update
+    assert health["connected"] is True
+    assert health["stale"] is False
+
+    changed = api.post("/v1/voice/status", json={**heartbeat, "human_microphones": 1})
+    assert changed.status_code == 200
+    assert api.get("/v1/activity").json()["events"][-1]["type"] == "voice_status_changed"
+
+
 def test_missing_evaluation_report_is_an_explicit_empty_state(tmp_path) -> None:
     app = create_app(
         planner_factory=FakePlanner,

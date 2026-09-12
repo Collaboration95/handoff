@@ -509,14 +509,21 @@ def create_app(
 
     @application.post("/v1/voice/status")
     async def voice_status(body: VoiceStatusInput) -> dict[str, Any]:
-        state.voice_status = body.model_dump()
-        state.voice_updated_at = time.monotonic()
-        state.event(
-            state.current_id,
-            "voice_connected" if body.connected else "voice_disconnected",
-            "Voice bridge heartbeat received.",
+        status = body.model_dump()
+        previous = state.voice_status
+        meaningful_fields = ("connected", "room_name", "human_microphones", "error")
+        changed = previous is None or any(
+            previous.get(field) != status[field] for field in meaningful_fields
         )
-        return {**body.model_dump(), "stale": False}
+        state.voice_status = status
+        state.voice_updated_at = time.monotonic()
+        if changed:
+            if previous is None or previous.get("connected") != body.connected:
+                event_type = "voice_connected" if body.connected else "voice_disconnected"
+            else:
+                event_type = "voice_status_changed"
+            state.event(state.current_id, event_type, "Voice bridge status changed.")
+        return {**status, "stale": False}
 
     @application.get("/v1/activity")
     async def activity() -> dict[str, Any]:
