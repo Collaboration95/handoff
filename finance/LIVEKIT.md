@@ -1,6 +1,6 @@
 # LiveKit voice bridge
 
-The bridge joins the hosted LiveKit room as a normal participant using `LIVEKIT_URL` and a short-lived `LIVEKIT_TOKEN`. It does not require the LiveKit API key or API secret. One `AgentSession` sends one GPT-Live-1 audio output to the room. The three remote human microphone streams are resampled to 24 kHz mono, unwrapped to `AudioFrame`, and combined with the public LiveKit `AudioMixer` before being assigned to `session.input.audio`.
+The bridge joins the hosted LiveKit room as a normal participant using `LIVEKIT_URL` and a short-lived `LIVEKIT_TOKEN`. It does not require the LiveKit API key or API secret. One `AgentSession` sends one GPT-Live-1 audio output to the room. The two remote human microphone streams are resampled to 24 kHz mono, unwrapped to `AudioFrame`, and combined with the public LiveKit `AudioMixer` before being assigned to `session.input.audio`.
 
 ## Required configuration
 
@@ -21,7 +21,7 @@ The token service must issue the agent a unique identity and a token scoped to `
 
 The active demo path uses LiveKit Cloud. Use the public `wss://…livekit.cloud` value stored as `LIVEKIT_URL`; no Tailscale, custom DNS, local certificate authority, or TLS bypass is needed. Never place a room token in documentation, chat, source control, or a shared URL.
 
-To refresh a six-hour token from the server credentials in `.env.local`, load the environment and write the token directly to a private temporary file. Change both values for each participant; use three distinct human identities plus `handoff-finance-agent`. Never reuse an identity while it is connected.
+To refresh a six-hour token from the server credentials in `.env.local`, load the environment and write the token directly to a private temporary file. Change both values for each participant; use two distinct human identities plus `handoff-finance-agent`. Never reuse an identity while it is connected.
 
 ```bash
 set -a
@@ -34,7 +34,7 @@ PYTHONPATH=finance .venv/bin/python -c 'import os,sys; from datetime import time
 chmod 600 "$TOKEN_FILE"
 ```
 
-Repeat with `finance-member-2`, `finance-member-3`, and `handoff-finance-agent`, using a separate file each time. The command prints nothing to the terminal. Delete the temporary token files after the rehearsal.
+Repeat with `finance-member-2` and `handoff-finance-agent`, using a separate file each time. The command prints nothing to the terminal. Delete the temporary token files after the rehearsal.
 
 Check the local configuration without making a network connection:
 
@@ -63,15 +63,15 @@ Then start the direct-room voice participant:
 PYTHONPATH=finance .venv/bin/python -m handoff_finance.livekit_agent --env-file .env.local
 ```
 
-On each of three laptops, open the stock LiveKit Meet custom tab at [meet.livekit.io/custom](https://meet.livekit.io/custom). Paste the same public Cloud WebSocket URL and that person's separate room-token file contents. All tokens must target `handoff-finance`, and all identities must be unique. Each person should publish one microphone and wear headphones to prevent echo and feedback. The activity page is the source of truth for proposal approval, creation state, and readback verification. The voice heartbeat posts the connected room, current remote human microphone count, model name, and a compact error state to `POST /v1/voice/status` on changes and every five seconds.
+On each of two laptops, open the stock LiveKit Meet custom tab at [meet.livekit.io/custom](https://meet.livekit.io/custom). Paste the same public Cloud WebSocket URL and that person's separate room-token file contents. Both tokens must target `handoff-finance`, and the identities must be unique. Each person should publish one microphone and wear headphones to prevent echo and feedback. The activity page is the source of truth for proposal approval, creation state, and readback verification. The voice heartbeat posts the connected room, current remote human microphone count, model name, and a compact error state to `POST /v1/voice/status` on changes and every five seconds.
 
 The voice tools can only create a proposal, read its status, or ask the backend to create a previously approved invoice. They have no approve or cancel operation. Initial approval through **Approve invoice workflow** authorizes creation of a sandbox draft after server validation; the page's create button is a fallback, not a second approval. The backend rejects stale, unapproved, or unverified proposals and owns the invoice fields and idempotency journal.
 
 ## Rehearsal checklist
 
 - `/v1/health` reports OpenAI ready and a fresh LiveKit heartbeat after the bridge connects.
-- All three human clients show unique identities, one microphone each, and headphones in use.
-- The bridge heartbeat reaches `human_microphones: 3`; muting or leaving lowers the count, and unmuting or rejoining restores it.
+- Both human clients show unique identities, one microphone each, and headphones in use.
+- The bridge heartbeat reaches `human_microphones: 2`; muting or leaving lowers the count, and unmuting or rejoining restores it.
 - A natural invoice request creates a proposal, and the agent asks for approval in the activity page.
 - Spoken approval alone causes no state change. The page approval changes the authoritative proposal state.
 - Creation is announced as successful only when the proposal is `completed` and `invoice.verified` is true.
@@ -81,4 +81,4 @@ The voice tools can only create a proposal, read its status, or ask the backend 
 
 The released SDK mixer produces one mono waveform without speaker identity. Overlapping speech can be harder to understand, and no statement in that mix can identify an approver. The authenticated activity-page action supplies approval. The bridge intentionally subscribes only to remote standard-participant microphone tracks and never mixes another agent or its own published output.
 
-The supplied Cloud token was verified by joining `handoff-finance` as `handoff-finance-agent` with subscriptions disabled. A synthetic macOS speech clip was converted to signed 16-bit, 24 kHz mono PCM, sent as 20 ms frames to GPT-Live, and caused the Responses delegate to call a harmless in-memory tool. No human audio, proposal approval, or finance write was used in that probe. A live three-laptop rehearsal and the persistent participant-audio bridge still require the explicit runtime authorization described by the operator workflow.
+The supplied Cloud token was verified by joining `handoff-finance` as `handoff-finance-agent` with subscriptions disabled. A synthetic macOS speech clip was converted to signed 16-bit, 24 kHz mono PCM, sent as 20 ms frames to GPT-Live, and caused the Responses delegate to call a harmless in-memory tool. The full media path was then verified with two synthetic remote standard participants publishing microphone tracks: health reached `human_microphones: 2`, GPT-Live heard the spoken request through the mixer, and the finance tool created pending simulated-fault proposal `fd96f4b313ad40adb084e7e89a211c64`. It remained unapproved with no invoice. A live two-laptop human rehearsal remains.

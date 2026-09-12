@@ -18,7 +18,7 @@
 - `finance/tests/test_livekit_agent.py`
   - 17 focused mixer, lifecycle, configuration, API-route, error-redaction, tool-surface, health, and announcement tests.
 - `finance/LIVEKIT.md`
-  - Exact direct-room launch, Cloud client setup, safe token refresh, health check, three-laptop/headphone rehearsal, and mixed-audio limitations.
+  - Exact direct-room launch, Cloud client setup, safe token refresh, health check, two-laptop/headphone rehearsal, and mixed-audio limitations.
 
 ## Verification
 
@@ -26,7 +26,7 @@ Run from the repository root on 2026-09-12:
 
 ```text
 PYTHONPATH=finance .venv/bin/pytest finance/tests -q
-93 tests passed; one upstream Starlette/AnyIO deprecation warning
+94 tests passed; one upstream Starlette/AnyIO deprecation warning
 
 PYTHONPATH=finance .venv/bin/python -m py_compile \
   finance/handoff_finance/livekit_agent.py finance/tests/test_livekit_agent.py
@@ -49,9 +49,10 @@ Installed imports compiled against `livekit-agents 1.8.1`, `livekit-plugins-open
 - LiveKit Cloud join succeeded with subscriptions disabled: room `handoff-finance`, room SID `RM_9rm5epi6442e`, identity `handoff-finance-agent`, zero remote participants.
 - An isolated `GPTLiveModel(model="gpt-live-1", delegation="responses")` session started in the Cloud room.
 - macOS synthetic speech was converted to signed 16-bit, 24 kHz mono PCM and fed in 20 ms frames. GPT-Live understood the utterance and its Responses delegate called the harmless `integration_probe` in-memory tool. The clean rerun emitted `gpt_live_session_started` and `responses_noop_tool_called` with no HTTP client leak warning.
-- After explicit user authorization for LiveKit participant microphone audio to OpenAI GPT-Live, the persistent bridge started as process/session ID `75114`. `/v1/health` reported `connected=true`, `stale=false`, room `handoff-finance`, model `gpt-live-1`, zero microphones, and no error.
+- After explicit user authorization for LiveKit participant microphone audio to OpenAI GPT-Live, the persistent bridge started. The current simulated-fault-mode process/session ID is `10294`. `/v1/health` reports `connected=true`, `stale=false`, room `handoff-finance`, model `gpt-live-1`, zero microphones after probe cleanup, and no error.
+- The full media path was verified with two synthetic remote standard participants publishing microphone tracks into room SID `RM_Xei5zLNQU8BM`. Health reached `human_microphones=2`. GPT-Live heard “Handoff, please propose an invoice for accepted September implementation work in the showcase case. Do not create the invoice yet” through the room mixer and called the real proposal API. Proposal `fd96f4b313ad40adb084e7e89a211c64` was created with `status=pending`, `fault_injection=true`, `approved=false`, and no invoice. Both synthetic participants then disconnected; the bridge returned to zero microphones and stayed connected.
 - No proposal approval or invoice write was performed by these probes.
 
 ## Remaining rehearsal
 
-Join three stock LiveKit Meet clients using unique Cloud room tokens and headphones. Confirm the heartbeat reaches three microphones and exercise mute, unmute, leave, and rejoin. The running bridge has not yet processed a live human turn. Coordinate with the finance operator before creating another proposal so an in-progress approved proposal is not superseded.
+Join two stock LiveKit Meet clients using unique Cloud room tokens and headphones. Confirm the heartbeat reaches two microphones and exercise mute, unmute, leave, and rejoin. The running bridge has processed synthetic audio but has not yet completed a live two-human rehearsal. The pending synthetic proposal should be approved only if the operator wants to continue that simulated-fault workflow; otherwise create a fresh normal proposal after restarting with `FINANCE_FAULT_INJECTION=false`.

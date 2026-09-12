@@ -167,7 +167,7 @@ class ParticipantFrames(AsyncIterator[rtc.AudioFrame]):
 
 class MixedRoomInput(io.AudioInput):
     def __init__(self, mixer: rtc.AudioMixer) -> None:
-        super().__init__(label="three-human-room-mix")
+        super().__init__(label="participant-room-mix")
         self._mixer = mixer
 
     async def __anext__(self) -> rtc.AudioFrame:
