@@ -10,12 +10,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "shadcn:install": "pnpm dlx shadcn@latest add --yes @agents-ui/all && pnpm format"
   },
   "dependencies": {
-    "@livekit/components-react": "^2.9.20",
+    "@livekit/components-react": "^2.9.21",
     "@livekit/protocol": "^1.41.0",
     "@phosphor-icons/react": "^2.1.8",
     "@radix-ui/react-collapsible": "^1.1.12",
@@ -41,7 +42,7 @@
     "cmdk": "^1.1.1",
     "embla-carousel-react": "^8.6.0",
     "jose": "^6.0.12",
-    "livekit-client": "^2.17.2",
+    "livekit-client": "^2.18.2",
     "livekit-server-sdk": "^2.13.3",
     "lucide-react": "^0.555.0",
     "media-chrome": "^4.17.2",
@@ -72,11 +73,13 @@
     "eslint-config-prettier": "^10.1.5",
     "eslint-plugin-import": "^2.31.0",
     "eslint-plugin-prettier": "^5.5.0",
+    "jsdom": "26.1.0",
     "prettier": "^3.4.2",
     "prettier-plugin-tailwindcss": "^0.6.11",
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "3.2.4"
   },
   "packageManager": "pnpm@9.15.9"
 }
