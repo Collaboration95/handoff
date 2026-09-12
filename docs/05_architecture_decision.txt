@@ -1,17 +1,58 @@
-RELAY — ARCHITECTURE DECISION / MINIMUM-PATH IMPLEMENTATION
+HANDOFF V2 — ARCHITECTURE DECISION / MINIMUM-PATH IMPLEMENTATION
+Last updated: 2026-09-12
 
 GOAL
 Build a convincing hackathon demo without spending time on generic infrastructure.
 
 CORE PRINCIPLE
-Do not build video calling, WebRTC, audio transport, recording, or realtime media plumbing yourself.
-Use existing infrastructure for all commodity pieces.
-Spend custom development time only on:
+Do not build video calling, WebRTC, audio transport, recording, speech plumbing, or generic agent orchestration yourself.
+
+Use existing infrastructure for commodity pieces.
+
+Spend custom development time on:
 - meeting context understanding
-- tool invocation
-- GitHub actions
-- Slack actions
-- action visibility / approval
+- reference resolution
+- intent/tool selection
+- real GitHub actions
+- real Slack actions
+- human-safe approval
+- visible action provenance
+- one optional deep-work delegation
+
+ARCHITECTURE PRINCIPLE
+Use a TWO-SPEED agent architecture.
+
+FAST PATH
+For immediate, deterministic actions:
+- retrieve GitHub item
+- assign issue
+- request PR review
+- send Slack message
+
+Use:
+GPT-Live-1
+-> delegated/fast OpenAI reasoning
+-> narrow direct tool
+-> result
+-> spoken confirmation
+
+DEEP PATH
+For genuinely autonomous work:
+- investigate a bug
+- inspect a codebase
+- run tests
+- prepare a patch
+- analyze implementation
+
+Use:
+GPT-Live-1
+-> start_repo_task(...)
+-> OpenAI Agents API / coding harness
+-> optional GPT-6 Astra if available
+-> sandbox / broad repo access
+-> progress + result
+
+Do NOT route simple realtime actions through the Agents API.
 
 RECOMMENDED STACK
 
@@ -19,120 +60,169 @@ RECOMMENDED STACK
 Use LiveKit Meet.
 
 Why:
-- Open-source
-- Ready-made multi-user video/audio room
-- Handles microphone, camera, participants, screen sharing, WebRTC, and room management
-- Can be forked and minimally rebranded
-- Avoids writing a custom video-call frontend
+- open source
+- ready-made multi-user video/audio room
+- handles microphone, camera, participants, screen sharing, WebRTC, and room management
+- can be minimally rebranded
+- avoids writing a custom conferencing frontend
 
-Recommendation:
-Fork the LiveKit Meet example and use it as the meeting UI.
-Only customize:
-- product name / branding
-- small Relay status area
+Customize only:
+- Handoff branding
+- small live/listening state
 - Agent Activity panel
 
-DO NOT IMPLEMENT:
+Do NOT implement:
 - WebRTC negotiation
-- microphone streaming logic
-- video layout system
-- participant media handling
-- meeting recording
+- microphone streaming plumbing
+- participant media layout
+- recording
+- custom video/audio transport
 
-2. REALTIME AGENT / VOICE
-Use LiveKit Agents with OpenAI GPT-Live.
+2. REALTIME AGENT
+Use LiveKit Agents.
 
 Architecture:
+
 Human participants
-    ↓
+    ->
 LiveKit Room
-    ↓
-Relay joins as an agent participant
-    ↓
-GPT-Live handles realtime conversation
-    ↓
-Relay publishes spoken responses back into the room
+    ->
+Handoff joins as agent participant
+    ->
+GPT-Live-1
+    ->
+spoken output back into LiveKit Room
 
 Why:
-- Agent can join the same room as a normal participant
-- LiveKit handles sending room audio to the agent
-- LiveKit handles returning agent audio to participants
-- Realtime interruption / conversational behavior is already supported
-- No custom audio socket or TTS pipeline is required
+- the agent behaves as a participant
+- LiveKit handles room audio delivery
+- LiveKit handles returned agent audio
+- interruption is part of the realtime interaction
+- no custom STT/TTS pipeline is needed
 
-DO NOT IMPLEMENT:
-- custom speech-to-text pipeline
-- custom text-to-speech pipeline
-- raw audio buffering
-- custom WebSocket transport for audio
-- interruption handling from scratch
+3. REALTIME MODEL
+Use GPT-Live-1.
 
-3. AGENT ↔ FRONTEND COMMUNICATION
-Use LiveKit's existing room/data messaging for small app events.
+Responsibilities:
+- listen/speak in realtime
+- manage conversational turn-taking
+- support interruption/correction
+- maintain the natural spoken meeting interaction
+- acknowledge deep-task delegation without blocking the meeting
 
-Purpose:
-Show judge-visible actions in the meeting UI.
+GPT-Live-1 should NOT directly contain all product logic.
 
-Example event:
-{
-  "type": "action_completed",
-  "service": "github",
-  "action": "assigned_issue",
-  "target": "#12",
-  "person": "Guru"
-}
+4. FAST REASONING / TOOL SELECTION
+Use a fast OpenAI Responses-capable model behind the realtime voice layer.
 
-Frontend displays:
-✓ GitHub #12 assigned → Guru
+Responsibilities:
+- resolve "that", "him", "the fix", etc.
+- map speech to structured tool calls
+- decide which narrow tool is needed
+- decide whether approval is required
+- construct useful Slack text
+- update important meeting state
 
-This activity feed is worth building because judges cannot see backend tool calls.
+Prefer a fast strong model available at the event.
+Do not use the most expensive/deepest model for every trivial action.
 
-4. GITHUB MODULE
-This is custom product logic.
+5. FAST TOOL LAYER
+Keep this narrow and deterministic.
 
-Implement only thin API wrappers:
-
+GitHub:
 - get_github_item(issue_or_pr)
 - assign_github_issue(issue, person)
 - request_pr_review(pr, person)
 
-Optional only if ahead of schedule:
+Optional:
 - create_github_issue(repo, title, description)
 
-Use a dedicated demo repository with predictable:
-- issue numbers
-- PR numbers
-- users
-- labels / descriptions
-
-Keep GitHub integration simple and reliable.
-
-5. SLACK MODULE
-Slack is an ACTION DESTINATION, not an input surface.
-
-Implement only:
-- send_slack_message(channel, text)
+Slack:
+- send_slack_message(channel_or_user, text)
 - send_slack_dm(user, text)
 
-Do NOT implement:
-- Slack event subscriptions
-- app mentions
-- slash commands
-- Socket Mode
-- incoming Slack conversations
-- complex OAuth
-- multiple workspaces
+Do NOT expose a giant generic GitHub/Slack surface to the realtime model.
 
-Use a free Slack workspace.
-One user account is sufficient for the demo.
-Relay can DM the same user or post into #engineering.
+6. DEEP-WORK AGENT — STRETCH
+Add only after the core demo is stable.
 
-If another person is available, optionally add them later.
+Expose a narrow bridge:
 
-6. PEOPLE / IDENTITY MAPPING
-Do not build a contacts system or database.
+start_repo_task(
+    repo,
+    objective,
+    github_context
+)
 
-Use hardcoded configuration:
+Optional:
+get_repo_task_status(task_id)
+
+Internally:
+- create/resume an Agents API session
+- give the task repository/issue context
+- run repository investigation / tests / patch work
+- emit status events
+- return a concise final result to Handoff
+
+Use case:
+"Handoff, investigate why that auth issue is happening."
+
+This is where a durable coding harness is appropriate.
+
+7. GPT-6 ASTRA — OPTIONAL
+If GPT-6 Astra API access is available, use it only where its stronger coding/tool ability is visible:
+
+GOOD:
+- repository investigation
+- multistep debugging
+- test execution/reasoning
+- patch preparation
+- deep coding task
+
+NOT GOOD:
+- "assign issue #12"
+- "send Alex a Slack message"
+- routine realtime confirmations
+
+This keeps latency and complexity low while still showcasing current OpenAI technology.
+
+8. MCP POLICY
+Do not adopt MCP merely because it exists.
+
+Realtime critical path:
+- prefer direct narrow GitHub/Slack wrappers
+
+Deep-work path:
+- GitHub MCP is reasonable if broad repository/issue/PR access makes the agent implementation easier
+- MCP should replace integration boilerplate, not add orchestration complexity
+
+9. MEETING STATE
+Use a tiny in-memory state object.
+
+Example:
+
+meeting_state = {
+    "current_github_item": None,
+    "current_pr": None,
+    "current_person": None,
+    "current_topic": None,
+    "pending_action": None
+}
+
+Purpose:
+- deterministic contextual references
+- reliable corrections
+- clean action confirmation
+
+Do NOT add:
+- Redis
+- vector DB
+- long-term memory
+- database
+unless the hackathon demo absolutely requires it.
+
+10. PEOPLE / IDENTITY MAPPING
+Use hardcoded config.
 
 PEOPLE = {
     "Guru": {
@@ -142,168 +232,309 @@ PEOPLE = {
     "Alex": {
         "github": "<github_username>",
         "slack": "<slack_user_id>"
+    },
+    "Sarah": {
+        "github": "<github_username>",
+        "slack": "<slack_user_id>"
     }
 }
 
-This is enough for a hackathon demo.
+This is sufficient for a hackathon.
 
-7. RECORDING
-Do NOT implement meeting recording.
+11. APPROVAL MODEL
+Keep approval conversational.
+
+READ
+Execute immediately.
+
+LOW-RISK WRITE
+Usually execute immediately for the demo.
+
+CONSEQUENTIAL WRITE
+Set pending_action and ask for a quick spoken confirmation.
+
+Example:
+
+Handoff:
+"I'm ready to assign issue 12 to Sarah. Go ahead?"
+
+User:
+"Actually, assign it to me."
+
+Handoff:
+updates pending_action
+
+User:
+"Yes."
+
+Handoff:
+executes the corrected action
+
+No approval dashboard is needed.
+
+12. AGENT <-> FRONTEND COMMUNICATION
+Use LiveKit data messages for small application events.
+
+Suggested event types:
+
+context_resolved
+action_proposed
+approval_requested
+approval_received
+action_started
+action_completed
+action_failed
+deep_task_started
+deep_task_progress
+deep_task_completed
+
+Example:
+
+{
+  "type": "context_resolved",
+  "reference": "that",
+  "resolved_to": "GitHub #12"
+}
+
+{
+  "type": "action_completed",
+  "service": "github",
+  "action": "assigned_issue",
+  "target": "#12",
+  "person": "Guru"
+}
+
+{
+  "type": "deep_task_progress",
+  "task_id": "task_123",
+  "message": "Running authentication tests"
+}
+
+13. AGENT ACTIVITY PANEL
+The panel exists because judges cannot see backend calls.
+
+Minimum rendering:
+
+CONTEXT
+"that" -> GitHub #12
+
+ACTION
+Assign GitHub #12 -> Guru
+
+APPROVAL
+Confirmed
+
+RESULT
+✓ GitHub #12 assigned
+
+For deep work:
+
+DELEGATED TASK
+Investigate GitHub #12
+
+AGENT
+OpenAI Agents API
+
+STATUS
+Running tests...
+
+RESULT
+✓ Root cause identified
+
+Do not build a full observability dashboard.
+
+14. SLACK STRATEGY
+Slack is an action destination, not an input surface.
+
+Use:
+- one free Slack workspace
+- one app/bot
+- one or two channels
+- current user DM
+
+Do NOT implement:
+- Slack event subscriptions
+- mentions
+- slash commands
+- Socket Mode
+- incoming Slack conversation
+- complex OAuth
+- multiple workspaces
+
+15. GITHUB STRATEGY
+Use one dedicated demo repository with predictable fixtures.
+
+Recommended:
+- Issue #12: authentication timeout bug
+- Issue #42: retry / HTTP 429 issue
+- PR #18: authentication fix
+
+Ensure before judging:
+- issue numbers exist
+- PR is open
+- user can be assigned
+- reviewer request is allowed
+- labels/descriptions are stable
+- demo can be reset quickly
+
+16. RECORDING
+Do not implement meeting recording.
 
 For submission:
-- use macOS screen recording, OBS, or another external screen recorder
+- use macOS screen recording, OBS, or equivalent external recorder
 
-The demo recording should capture:
+Capture:
 - meeting UI
-- Relay speaking
+- Handoff speaking
+- interruption
 - Agent Activity panel
-- GitHub changes
-- Slack notifications/messages
+- GitHub side effect
+- Slack side effect
+- optional deep task
 
-Built-in recording is unnecessary for the MVP.
-
-SYSTEM SHAPE
+17. SYSTEM SHAPE
 
 Human A ─┐
-Human B ─┼── LiveKit Room ─── Relay Agent
-Mic/Video┘                         │
-                                  ↓
-                              GPT-Live
-                                  │
-                         tool/function calls
-                                  │
-                      ┌───────────┴───────────┐
-                      ↓                       ↓
-                   GitHub                   Slack
-                      │                       │
-                      └───────────┬───────────┘
-                                  ↓
-                         spoken confirmation
-                         + activity feed
+Human B ─┼── LiveKit Room ─── Handoff LiveKit Agent
+Mic/Video┘                         |
+                                   v
+                              GPT-Live-1
+                                   |
+                         Responses delegation
+                                   |
+                     fast reasoning / tool choice
+                                   |
+                ┌──────────────────┼──────────────────┐
+                v                  v                  v
+             GitHub             Slack         start_repo_task
+           fast tools         fast tools             |
+                                                     v
+                                              Agents API
+                                                     |
+                                              coding harness
+                                                     |
+                                              optional Astra
+                                                     |
+                                               result/status
 
-CUSTOM CODE SHOULD LIVE ROUGHLY HERE
+All paths:
+    ->
+LiveKit data events
+    ->
+Agent Activity panel
 
-relay/
+18. RECOMMENDED REPOSITORY SHAPE
+
+handoff/
 
 frontend/
     LiveKit Meet fork
     ActivityPanel.tsx
+    handoffEvents.ts
 
 agent/
     agent.py
+    meeting_state.py
+    approvals.py
+
     tools/
         github.py
         slack.py
         contacts.py
+        repo_task.py
+
+    deep_agent/
+        agents_api.py
+        task_events.py
 
 .env
 README.md
 
-WHAT RELAY ITSELF SHOULD BE RESPONSIBLE FOR
+Keep deep_agent/ absent until the core demo works.
 
-1. CONTEXT
-Understand references from the meeting:
+19. HANDOFF'S ACTUAL PRODUCT RESPONSIBILITY
+
+CONTEXT
+Understand references:
 - "that issue"
 - "the fix"
 - "him"
 - "what we decided"
 
-2. INTENT
-Map natural speech to structured tool calls.
+INTENT
+Map natural speech to structured actions.
 
-Example:
-"Get Alex to look at the fix."
-
-Context:
-current object = PR #18
-Alex.github = alex123
-
-Action:
-request_pr_review(18, "alex123")
-
-3. CROSS-SYSTEM ACTIONS
+CROSS-SYSTEM EXECUTION
 Example:
 "Get Alex to review it and let him know on Slack."
 
 Actions:
 - request GitHub review
-- send Slack DM with useful context
+- send Slack DM
 
-4. REALTIME CORRECTION / INTERRUPTION
+REALTIME CORRECTION
 Example:
 "Actually, not Alex — Sarah."
 
-The agent should adjust the pending action before execution.
+Update the pending action before execution.
 
-5. SAFETY / APPROVAL
-For meaningful write actions, optionally require confirmation.
+SAFETY
+Ask for lightweight confirmation where appropriate.
+
+DELEGATION
+Recognize when a request is not a simple side effect but a real task.
 
 Example:
-Relay:
-"I'm ready to assign #12 to Sarah and request her review. Go ahead?"
+"Investigate the bug."
+-> deep task
 
-User:
-"Yes."
+"Assign the bug."
+-> fast tool
 
-Then execute.
-
-WHAT NOT TO BUILD
-
+20. WHAT NOT TO BUILD
 - Zoom integration
 - Google Meet integration
 - Teams integration
 - custom video calling
 - custom WebRTC
 - custom audio streaming
-- meeting recording
-- custom STT / TTS
+- recording
+- custom STT/TTS
+- custom interruption pipeline
 - databases
 - vector stores
 - long-term memory
-- multiple Slack workspaces
+- multi-workspace Slack
 - Slack incoming events
 - OAuth-heavy integrations
 - Jira
 - Linear
 - calendar integration
-- multi-agent architecture
-- sophisticated identity management
-
-WHY LIVEKIT OVER JITSI
-Jitsi is very easy for embedding a video call, but Relay would still need custom work to:
-- access participant audio cleanly
-- stream audio to the AI
-- inject AI audio back into the meeting
-
-LiveKit already supports the AI agent as a room participant.
-Therefore the architecture is simpler:
-
-LiveKit Room
-    ↓
-LiveKit Agent
-    ↓
-GPT-Live
-
-rather than:
-
-Jitsi
-    ↓
-custom audio bridge
-    ↓
-OpenAI
+- generic multi-agent hierarchy
+- sophisticated identity
+- giant MCP tool surface
+- custom autonomous coding harness if Agents API already provides the required primitive
 
 FINAL IMPLEMENTATION DIRECTIVE
-
-Fork LiveKit Meet.
-Do not implement video conferencing.
-Run Relay as a LiveKit Agent participant using GPT-Live.
-Keep Slack output-only.
-Use thin GitHub and Slack tool wrappers.
+Fork/use LiveKit Meet.
+Run Handoff as a LiveKit Agent participant.
+Use GPT-Live-1 for the realtime human conversation.
+Use fast OpenAI reasoning for contextual resolution and narrow tool calls.
+Keep GitHub and Slack direct and deterministic.
 Use hardcoded user mappings.
+Keep important context in a tiny in-memory object.
+Use conversational pending-action approval.
+Publish action events to the meeting UI.
 Do not implement recording.
-Add a small Agent Activity panel so every action is visible.
+Only after this is stable, add ONE Agents API deep-work flow.
 
-The project's value should come from:
-conversation context → intent understanding → real action → confirmation
+Handoff's value must come from:
+
+conversation context
+-> intent understanding
+-> appropriate execution path
+-> real action/work
+-> human-safe behavior
+-> visible confirmation
 
 NOT from infrastructure.

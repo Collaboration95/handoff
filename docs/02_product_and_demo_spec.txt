@@ -1,97 +1,265 @@
-PROJECT CONCEPT — RELAY (WORKING NAME)
+PROJECT CONCEPT — HANDOFF V2
+Last updated: 2026-09-12
 
 ONE-LINE IDEA
 Meetings should not end with a list of action items. They should end with the actions already done.
 
 PRODUCT
-Relay is a realtime voice agent that listens to a live meeting, understands the ongoing conversation, and performs actions across tools like GitHub and Slack when explicitly invoked by users.
+Handoff is a realtime voice agent that joins a live meeting as a participant, understands the ongoing conversation, resolves contextual references, and performs actions across tools like GitHub and Slack when explicitly invoked.
+
+Handoff is NOT a meeting-transcription product.
 
 PRIMARY USER STORY
-While in a meeting, a user can say something natural like:
+During a meeting:
 
-"Relay, assign that issue to me and send me the details privately on Slack."
+User:
+"Handoff, assign that issue to me and send me the details privately on Slack."
 
-Relay should:
-1. Understand what "that issue" refers to from the conversation.
-2. Perform the GitHub action.
-3. Send the Slack message.
-4. Verbally confirm what it did.
+Handoff should:
+1. Understand "that issue" from the recent meeting context.
+2. Resolve "me" to the current user's configured identity.
+3. Decide that the request contains two low-latency tool actions.
+4. Assign the GitHub issue.
+5. Send the Slack DM.
+6. Verbally confirm both actions.
+7. Publish visible activity events into the meeting UI.
 
 IMPORTANT PRODUCT DIFFERENTIATOR
-The value is NOT speech-to-text.
+The value is NOT:
+- speech-to-text
+- summarization
+- generic note taking
+
 The value is:
 - continuous meeting context
-- natural references like "that", "him", "the fix", "what we decided"
-- real actions in external tools
-- realtime spoken interaction and interruption
-- lightweight approval before consequential actions
+- references such as "that", "him", "the fix", "what we decided"
+- realtime spoken interaction
+- natural interruption/correction
+- real external side effects
+- cross-system action chaining
+- lightweight human approval
+- visible action provenance
+- optional delegation of genuinely complex work
 
-MVP CAPABILITIES
-Implement only these four tools:
+CORE TECHNOLOGY SHAPE
+LiveKit Meeting
+    ->
+Handoff LiveKit Agent
+    ->
+GPT-Live-1
+    ->
+OpenAI Responses reasoning / tool selection
+    ->
+GitHub / Slack narrow tools
+    ->
+spoken confirmation + Agent Activity feed
+
+OPTIONAL DEEP-WORK PATH
+GPT-Live-1
+    ->
+start_repo_task(...)
+    ->
+OpenAI Agents API / coding harness
+    ->
+repository investigation / tests / patch preparation
+    ->
+status events + final result
+
+IMPORTANT:
+The deep-work path is a stretch capability.
+It must NOT delay or destabilize the core realtime demo.
+
+MVP FAST TOOLS
+Implement only narrow, deterministic tools:
+
 1. get_github_item(issue_or_pr)
 2. assign_github_issue(issue, person)
 3. request_pr_review(pr, person)
 4. send_slack_message(person_or_channel, message)
 
-OPTIONAL FIFTH CAPABILITY IF TIME PERMITS
+Optional:
 5. create_github_issue(repo, title, description)
+
+Do not expose dozens of GitHub or Slack operations to the realtime model.
+
+DEEP-WORK TOOLS — STRETCH
+Only if the core demo is already stable:
+
+5/6. start_repo_task(repo, objective, github_context)
+6/7. get_repo_task_status(task_id)
+
+Example use:
+"Handoff, investigate why that auth issue is happening."
+
+Handoff can:
+- resolve "that auth issue" -> GitHub #12
+- acknowledge immediately
+- start a deep repository task
+- allow the meeting to continue
+- show task progress in the activity panel
+- report the result later
+
+MEETING STATE
+Use a tiny explicit in-memory object for demo reliability.
+
+Example:
+
+meeting_state = {
+    "current_github_item": "#12",
+    "current_pr": "#18",
+    "current_person": "Guru",
+    "last_topic": "authentication timeout",
+    "pending_action": None
+}
+
+Purpose:
+- preserve critical references deterministically
+- make interruption/correction reliable
+- reduce dependence on the model re-inferring important entities every time
+
+This is NOT a database or long-term memory system.
+
+APPROVAL MODEL
+Keep approval conversational and lightweight.
+
+READ ACTIONS
+Examples:
+- get issue
+- get PR
+
+Behavior:
+- execute immediately
+
+LOW-RISK WRITES
+Examples:
+- Slack message
+- request reviewer
+
+Behavior:
+- normally execute immediately for the hackathon demo
+
+CONSEQUENTIAL WRITES
+Examples:
+- assignment changes
+- creating PRs
+- merges
+- deployments
+
+Behavior:
+1. set pending_action
+2. Handoff says what it is about to do
+3. user says "yes", "go ahead", or corrects it
+4. execute only after approval
+
+No approval dashboard is required.
 
 DEMO STORY
 
-Scene 1 — Retrieve context
+SCENE 1 — Retrieve context
 User:
 "The auth bug is still happening. I think there's already an issue for it."
 
 User:
-"Relay, pull up GitHub issue 12."
+"Handoff, pull up GitHub issue 12."
 
-Relay:
+Handoff:
 "Issue 12 is the authentication timeout bug. It's currently unassigned and marked high priority."
 
-UI activity:
-- GitHub #12 retrieved
+Activity:
+CONTEXT
+GitHub #12 -> authentication timeout bug
 
-Scene 2 — Resolve contextual reference + perform two actions
+RESULT
+✓ GitHub #12 retrieved
+
+SCENE 2 — Resolve contextual reference + perform two actions
 User:
 "Okay, assign that to me and send me the details privately on Slack."
 
-Relay:
-- Understands "that" = issue #12
-- Assigns GitHub issue #12
-- Sends Slack DM
-- Verbally confirms both actions
+Handoff:
+- resolves "that" -> issue #12
+- resolves "me" -> current user
+- assigns issue #12
+- sends Slack DM
+- confirms both
 
-UI activity:
-- Assigned GitHub #12 -> user
-- Slack DM sent -> user
+Activity:
+CONTEXT
+"that" -> GitHub #12
+"me" -> Guru
 
-Scene 3 — PR review workflow
+ACTION
+Assign GitHub #12 -> Guru
+Send Slack DM -> Guru
+
+RESULT
+✓ GitHub #12 assigned
+✓ Slack DM sent
+
+SCENE 3 — PR workflow
 User:
 "Actually there's already a fix in PR 18. Request me as a reviewer and let engineering know we're looking at it."
 
-Relay:
-- Requests user as reviewer on GitHub PR #18
-- Posts a message into #engineering on Slack
-- Verbally confirms actions
+Handoff:
+- requests current user as reviewer on PR #18
+- posts a message to #engineering
+- confirms both
 
-Scene 4 — Realtime interruption
-Relay begins proposing or confirming an action.
+Activity:
+✓ Reviewer requested on PR #18
+✓ Posted to #engineering
+
+SCENE 4 — Realtime interruption / correction
+Handoff begins proposing or confirming an action.
 
 User interrupts:
 "Actually, hold on. Don't assign it to Sarah. Assign it to me."
 
-Relay adapts immediately and updates the action.
+Handoff adapts immediately and updates/cancels the pending action before execution.
 
-WHY THIS DEMO WORKS
-It shows:
+This is an important GPT-Live-1 showcase.
+
+SCENE 5 — OPTIONAL DEEP WORK
+Only include if stable.
+
+User:
+"Handoff, investigate why that auth issue is happening."
+
+Handoff:
+"Yep. I'll investigate issue 12. Keep going."
+
+Activity:
+DELEGATED TASK
+Investigate GitHub #12
+
+AGENT
+OpenAI Agents API / coding harness
+
+STATUS
+- repository loaded
+- searching auth flow
+- running tests
+
+Later:
+Handoff:
+"I finished investigating issue 12. The likely cause is in the token refresh timeout path. I have the findings ready."
+
+WHY THE DEMO WORKS
+It visibly demonstrates:
 - realtime voice
-- contextual language understanding
+- interruption
+- contextual reference resolution
+- structured meeting state
 - GitHub integration
 - Slack integration
 - real external side effects
-- natural conversational reference resolution
-- interruption handling
+- cross-tool execution
+- lightweight approval
 - visible action trace
+- optional long-running agent delegation
 
 IMPORTANT PITCH LINE
-"Most meeting assistants create notes. Relay turns decisions into actions while the meeting is still happening."
+"Most meeting assistants create notes. Handoff turns decisions into actions while the meeting is still happening."
+
+OPTIONAL TECHNICAL PITCH LINE
+"Handoff uses GPT-Live-1 for the live conversation, fast OpenAI reasoning for immediate tool actions, and only delegates to a full agent harness when the work genuinely requires autonomy."

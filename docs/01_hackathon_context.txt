@@ -1,28 +1,117 @@
-AGENTS EVERYWHERE HACKATHON — CONTEXT
+AGENTS EVERYWHERE HACKATHON — UPDATED CONTEXT
+Last updated: 2026-09-12
 
-Event:
+EVENT
 - OpenAI x AI Tinkerers "Agents Everywhere" hackathon in Singapore.
 - One-day hackathon.
 - Solo participation is allowed.
-- Build window is roughly 255 minutes (~4h15m), but practical personal implementation target is ~3 hours.
+- Total build window is roughly 255 minutes (~4h15m).
+- Personal implementation target: get the core demo stable within ~3 hours.
 - Judging strongly rewards a sharp, working demo over a broad but incomplete product.
-- The challenge is about agents that live inside an existing context/workflow rather than being standalone chatbots.
-- Strong submissions should feel native to the environment they operate in and should take useful real-world actions.
+- The challenge favors agents that live inside an existing workflow/context rather than standalone chatbots.
+- Strong submissions should feel native to the environment and take useful real-world actions.
 - Human approval / responsible action boundaries are valuable.
 
-Strategic interpretation:
-- Do NOT build a giant multi-agent architecture.
-- Do NOT build multiple surfaces.
-- Pick one compelling workflow and make it work end-to-end.
-- The judging demo should visibly show: context -> reasoning -> action -> confirmation.
-- The project should demonstrate something materially better because it is realtime and embedded in a workflow.
+CURRENT PROJECT DIRECTION
+Project: Handoff
 
-Personal situation:
+Core idea:
+"Meetings should not end with a list of action items. They should end with the actions already done."
+
+Handoff is a realtime meeting participant that:
+1. Listens to the ongoing meeting.
+2. Maintains enough conversational context to resolve references such as:
+   - "that issue"
+   - "the fix"
+   - "him"
+   - "what we decided"
+3. Lets users explicitly invoke it in natural speech.
+4. Performs real actions in GitHub / Slack.
+5. Gives spoken confirmation.
+6. Shows a visible action trace in the meeting UI.
+7. Can ask for lightweight confirmation before consequential actions.
+
+LATEST IMPLEMENTATION STRATEGY
+Prefer OpenAI technologies where they solve a real problem, because OpenAI is a hackathon partner, but do NOT force OpenAI components into places where simpler infrastructure already solves the problem better.
+
+Use:
+- LiveKit Meet for the video/audio meeting surface.
+- LiveKit Agents for the agent participant.
+- GPT-Live-1 for realtime full-duplex spoken interaction and interruption.
+- OpenAI Responses / delegated reasoning for low-latency intent + tool selection.
+- Thin direct GitHub and Slack functions for deterministic realtime side effects.
+- Optional OpenAI Agents API for long-running/deep work only.
+- Optional GPT-6 Astra for deep autonomous coding/repository tasks if API access is available.
+- Optional GitHub MCP in the deep-work path where broad repository access is useful.
+
+DO NOT REBUILD SOLVED INFRASTRUCTURE
+Do NOT spend hackathon time implementing:
+- video calling
+- WebRTC negotiation
+- audio transport
+- custom STT
+- custom TTS
+- recording
+- custom interruption handling
+- generic agent orchestration
+- vector databases
+- long-term memory
+- production OAuth
+- contact-management systems
+- broad multi-agent hierarchies
+- multiple collaboration surfaces
+
+TWO-SPEED AGENT PRINCIPLE
+Handoff should have two execution paths:
+
+FAST PATH
+For actions where the desired operation is already clear:
+- fetch GitHub issue/PR
+- assign issue
+- request PR reviewer
+- send Slack message
+
+Flow:
+meeting -> GPT-Live-1 -> Responses reasoning -> narrow tool -> result -> spoken confirmation
+
+DEEP PATH (STRETCH)
+For work that genuinely benefits from an autonomous coding/research harness:
+- investigate a bug
+- inspect a repository
+- run tests
+- prepare a patch
+- produce a technical explanation
+
+Flow:
+meeting -> GPT-Live-1 -> delegate task -> Agents API / coding harness -> result later in the same meeting
+
+Do NOT put the Agents API in the realtime critical path for simple actions.
+
+CORE STRATEGIC LINE
+"One surface -> contextual understanding -> real side effect -> human-safe action -> visible confirmation."
+
+DEMO SUCCESS CRITERIA
+The judges should visibly understand this sequence in seconds:
+1. Meeting context exists.
+2. User refers to something naturally.
+3. Handoff resolves the reference.
+4. Handoff chooses a real action.
+5. Handoff optionally confirms consequential changes.
+6. Handoff performs the side effect.
+7. Handoff speaks the result.
+8. The activity panel proves what happened.
+
+PERSONAL CONSTRAINTS
 - Solo builder.
 - Master's student studying Software Engineering.
-- Limited time.
-- Strong interest in agent systems, realtime APIs, backend integrations, GitHub, Slack, and production workflows.
-- Goal is not merely to finish; goal is to have a credible chance at a Singapore regional placement.
+- Limited build time.
+- Strong interest in realtime APIs, agent systems, GitHub, Slack, backend integrations, and production workflows.
+- Goal is not just to finish; goal is a credible Singapore regional placement-quality demo.
 
-Core strategic line:
-"One surface -> contextual understanding -> real side effect -> human-safe action -> visible confirmation."
+PRIMARY RULE
+Do not add a technology unless it improves:
+- demo clarity,
+- implementation speed,
+- reliability,
+- contextual intelligence,
+- or the credibility of the agent behavior.

@@ -1,0 +1,344 @@
+HANDOFF — OPENAI / PARTNER TECHNOLOGY INTEGRATION GUIDE
+Last updated: 2026-09-12
+
+PURPOSE
+This document explains exactly where each current technology belongs in Handoff so local coding agents do not over-engineer the system.
+
+GUIDING RULE
+Use the newest OpenAI technology where it creates a visible product advantage.
+Do not use new technology merely to increase the number of logos in the architecture diagram.
+
+1. LIVEKIT
+ROLE
+Commodity realtime infrastructure.
+
+USE FOR
+- WebRTC
+- room creation
+- participant media
+- video/audio UI
+- Handoff agent participant
+- small room/data events to the frontend
+
+DO NOT REBUILD
+- conferencing
+- audio transport
+- interruption transport
+- recording
+
+WHY IT BELONGS
+Handoff is not a video-call infrastructure project.
+
+2. GPT-LIVE-1
+ROLE
+Realtime conversational layer.
+
+USE FOR
+- full-duplex spoken meeting interaction
+- listening while participating
+- interruption/correction
+- spoken acknowledgements
+- verbal confirmations
+- maintaining a natural conversational presence
+
+GOOD EXAMPLE
+User:
+"Actually, hold on. Don't assign it to Sarah. Assign it to me."
+
+GPT-Live-1 should naturally handle the interruption and revised turn.
+
+DO NOT USE IT AS
+- a replacement for every backend integration
+- a long-running coding harness
+
+3. OPENAI RESPONSES / DELEGATED BACKEND REASONING
+ROLE
+Fast structured reasoning behind the voice agent.
+
+USE FOR
+- contextual reference resolution
+- intent extraction
+- tool selection
+- approval decision
+- argument construction
+- concise result synthesis
+
+EXAMPLES
+"that" -> GitHub #12
+"me" -> Guru
+"the fix" -> PR #18
+
+Then:
+assign_github_issue(12, "guru")
+send_slack_dm("guru", "...")
+
+DESIGN GOAL
+Keep the realtime critical path fast.
+
+MODEL POLICY
+Prefer a fast strong OpenAI model available during the event.
+Do not require the deepest model for routine tool routing.
+
+4. OPENAI AGENTS API
+ROLE
+Long-running / durable autonomous work.
+
+USE ONLY FOR REQUESTS LIKE
+- "Investigate why that bug is happening."
+- "Look through the repo and find the likely cause."
+- "Run the tests and prepare a patch."
+- "Compare the implementation against the issue."
+
+DO NOT USE FOR
+- assigning an issue
+- fetching a PR
+- sending a Slack message
+- requesting a reviewer
+
+WHY
+These simple operations are already well-defined side effects.
+Adding a full agent harness would increase latency and failure modes without adding intelligence.
+
+RECOMMENDED HANDOFF BRIDGE
+
+start_repo_task(
+    repo,
+    objective,
+    github_context
+)
+
+Optional:
+get_repo_task_status(task_id)
+
+The rest of the Agents API implementation should be hidden behind this narrow boundary.
+
+5. GPT-6 ASTRA
+ROLE
+Optional deep-task reasoning/coding model.
+
+USE IF API ACCESS IS AVAILABLE.
+
+BEST PLACE
+Inside the deep Agents API path.
+
+GOOD TASKS
+- repository investigation
+- debugging
+- multistep tool workflows
+- code change generation
+- technical root-cause analysis
+
+BAD PLACE
+Every realtime spoken turn.
+
+WHY
+The value of Astra is more visible when the task genuinely requires deep reasoning.
+
+6. GITHUB DIRECT API
+ROLE
+Reliable realtime side effects.
+
+USE FOR
+- get issue/PR
+- assign issue
+- request PR review
+- optionally create issue
+
+WHY
+For a 3-hour hackathon build, a tiny wrapper is:
+- easy to debug
+- deterministic
+- easy to show judges
+- lower risk than exposing a broad tool space
+
+7. GITHUB MCP
+ROLE
+Optional broad repository/tool access for the deep-work agent.
+
+USE WHEN
+The Agents API task needs flexible access across:
+- repository files
+- issues
+- PRs
+- repository metadata
+
+DO NOT REPLACE
+the narrow realtime GitHub functions unless MCP is demonstrably simpler and equally reliable.
+
+8. SLACK DIRECT API
+ROLE
+Realtime action destination.
+
+USE FOR
+- channel message
+- DM
+
+Slack is NOT an input surface in the MVP.
+
+Do not implement:
+- events
+- mentions
+- slash commands
+- full bot conversations
+- multiple workspaces
+
+9. MEETING STATE
+ROLE
+Tiny deterministic contextual anchor.
+
+Use an in-memory object such as:
+
+meeting_state = {
+    "current_github_item": "#12",
+    "current_pr": "#18",
+    "current_person": "Guru",
+    "pending_action": None
+}
+
+WHY
+The model has conversational context, but the product should explicitly anchor critical entities required for safe actions.
+
+This is not long-term memory.
+
+10. PENDING ACTION
+ROLE
+Human-safe correction/approval.
+
+Example:
+
+pending_action = {
+    "tool": "assign_github_issue",
+    "args": {
+        "issue": 12,
+        "person": "Sarah"
+    }
+}
+
+User:
+"Actually, assign it to me."
+
+Update pending_action before execution.
+
+Then:
+"Go ahead?"
+-> yes
+-> execute
+
+11. AGENT ACTIVITY EVENTS
+ROLE
+Make hidden reasoning/actions legible to judges.
+
+Recommended events:
+- context_resolved
+- action_proposed
+- approval_requested
+- approval_received
+- action_started
+- action_completed
+- action_failed
+- deep_task_started
+- deep_task_progress
+- deep_task_completed
+
+The panel should not expose chain-of-thought.
+It should expose:
+- resolved context
+- chosen action
+- approval state
+- execution status
+- result
+
+12. FINAL MODEL / INFRASTRUCTURE MAP
+
+MEETING / MEDIA
+LiveKit Meet + LiveKit Agents
+
+REALTIME HUMAN INTERACTION
+GPT-Live-1
+
+FAST REASONING / TOOL ROUTING
+OpenAI Responses-capable fast model
+
+IMMEDIATE SIDE EFFECTS
+Direct GitHub API
+Direct Slack API
+
+EXPLICIT CONTEXT
+In-memory meeting_state
+
+SAFE WRITES
+pending_action + spoken confirmation
+
+OPTIONAL DEEP AUTONOMY
+OpenAI Agents API / coding harness
+
+OPTIONAL DEEP MODEL
+GPT-6 Astra
+
+OPTIONAL BROAD REPO ACCESS
+GitHub MCP
+
+VISIBLE TRACE
+LiveKit data messages -> ActivityPanel
+
+13. IMPLEMENTATION DECISION TABLE
+
+Request:
+"Pull up issue 12."
+Path:
+FAST
+Reason:
+simple read
+
+Request:
+"Assign that to me."
+Path:
+FAST
+Reason:
+simple deterministic write
+
+Request:
+"Tell engineering we're reviewing it."
+Path:
+FAST
+Reason:
+simple Slack side effect
+
+Request:
+"Actually not Sarah, assign it to me."
+Path:
+FAST + pending_action correction
+Reason:
+realtime conversational correction
+
+Request:
+"Investigate why that issue is happening."
+Path:
+DEEP
+Reason:
+requires repository exploration / reasoning
+
+Request:
+"Run the tests and prepare a fix."
+Path:
+DEEP
+Reason:
+long-running coding/tool task
+
+14. FAILURE / FALLBACK POLICY
+If Agents API or Astra access causes implementation friction:
+CUT IT.
+
+The core project remains strong with:
+LiveKit
++ GPT-Live-1
++ fast OpenAI reasoning
++ GitHub
++ Slack
++ approval
++ visible action trace
+
+The deep path is a bonus, not the product foundation.
+
+15. ONE-SENTENCE ARCHITECTURE PITCH
+"GPT-Live-1 stays in the meeting with you, immediate actions use a fast deterministic tool path, and Handoff only spins up a full OpenAI agent when the work actually requires autonomy."

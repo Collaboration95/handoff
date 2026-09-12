@@ -1,159 +1,271 @@
-3-HOUR MVP IMPLEMENTATION PLAN
+HANDOFF V2 — 3-HOUR CORE BUILD PLAN
+Last updated: 2026-09-12
 
 PRIMARY GOAL
 Ship one reliable end-to-end demo:
-voice -> meeting context -> GitHub action -> Slack action -> spoken confirmation
+
+live meeting
+-> GPT-Live-1 conversation
+-> contextual reference
+-> GitHub action
+-> Slack action
+-> spoken confirmation
+-> visible action trace
+
+The core demo must be stable within ~3 hours.
+
+The hackathon has additional time beyond this personal target, but any remaining time should first improve reliability and only then be used for a deep-work Agents API feature.
+
+NON-NEGOTIABLE ARCHITECTURAL RULE
+Do not build solved infrastructure.
+
+Use:
+- LiveKit Meet for meeting UI / WebRTC
+- LiveKit Agents for the agent participant
+- GPT-Live-1 for realtime spoken interaction
+- OpenAI Responses-style backend reasoning/tool selection
+- direct GitHub API wrappers
+- direct Slack API wrappers
+- LiveKit data messages for Agent Activity UI events
 
 DO NOT BUILD
 - Zoom integration
 - Google Meet integration
 - Microsoft Teams integration
-- Slack incoming event handling
-- Slack event subscriptions
-- slash commands
-- full Slack bot conversational surface
+- custom WebRTC
+- custom microphone transport
+- custom STT
+- custom TTS
+- custom interruption system
+- meeting recording
+- Slack incoming events
+- Slack slash commands
+- full Slack bot surface
 - multiple Slack workspaces
 - production OAuth
 - speaker diarization
 - vector database
 - long-term memory
-- multi-agent architecture
-- calendar integration
+- full contacts system
 - Jira
 - Linear
-- multiple project management integrations
-- full contact management system
-- production auth
-- fancy database
+- calendar integration
+- generic multi-agent framework
+- database
+- sophisticated approval UI
+- large MCP tool surface in the realtime path
 
-MEETING SURFACE
-Use a simple browser page.
-It represents the meeting.
-The microphone streams audio to OpenAI's realtime voice model.
-The meeting app should have a small "Agent Activity" panel so judges can see actions.
+CORE SYSTEM
 
-SUGGESTED UI
+Human(s)
+   ->
+LiveKit Room
+   ->
+Handoff Agent participant
+   ->
+GPT-Live-1
+   ->
+fast reasoning / narrow tool calls
+   -> GitHub
+   -> Slack
+   ->
+spoken confirmation
+   +
+LiveKit data event
+   ->
+Agent Activity panel
 
-Relay                         LIVE
+TINY REQUIRED STATE
 
-[ microphone / waveform / listening state ]
-
-Agent Activity:
-- Retrieved GitHub #12
-- Assigned GitHub #12 -> Guru
-- Requested reviewer on PR #18
-- Slack DM sent
-- Posted to #engineering
-
-ARCHITECTURE
-
-Browser microphone
-        |
-        v
-OpenAI realtime voice model
-        |
-        v
-tool/function call layer
-        |
-        +--> GitHub API
-        |
-        +--> Slack API
-        |
-        v
-spoken confirmation + activity feed
-
-SLACK STRATEGY — MINIMUM PATH OF RESISTANCE
-Slack is an action destination, NOT the place where Relay receives commands.
-
-Do:
-- Create/use a free Slack workspace.
-- Create one custom Slack app/bot.
-- Let the backend use Slack's API to post messages.
-- Use one or two channels like #engineering and #product.
-- Send DMs to the current user if there are no other real users.
-
-Do NOT:
-- Implement Slack mentions/events.
-- Implement incoming commands from Slack.
-- Depend on Slack Premium.
-
-IF ONLY ONE SLACK ACCOUNT EXISTS
-This is fine.
-
-Use a simple contact mapping:
-people = {
-  "Guru": {
-    "github": "<github username>",
-    "slack": "<Slack user ID>"
-  }
+meeting_state = {
+    "current_github_item": None,
+    "current_pr": None,
+    "current_person": None,
+    "pending_action": None
 }
 
-For the demo, Relay can send a DM to the same user.
-If another hackathon participant joins the free workspace, optionally add them later.
-
-GITHUB STRATEGY
-Use a dedicated demo repository containing:
-- realistic issues
-- at least one open PR
-- predictable issue/PR numbers
-- user already eligible for assignment/review
-
-Recommended test fixtures:
-- Issue #12: authentication timeout bug
-- Issue #42: retry / HTTP 429 issue
-- PR #18: proposed fix for authentication issue
+Do not add persistence unless absolutely necessary.
 
 TIMEBOX
 
-0:00-0:35
-- Browser microphone
-- Realtime voice connection
-- Agent can listen and speak
+0:00 - 0:30
+REALTIME FOUNDATION
+- fork/start from LiveKit Meet
+- create/join test room
+- run Handoff as a LiveKit agent participant
+- connect GPT-Live-1
+- verify:
+  - user can speak
+  - Handoff can hear
+  - Handoff can answer
+  - user can interrupt Handoff
 
-0:35-1:10
-- GitHub get issue
-- GitHub assign issue
+Success condition:
+A two-way realtime conversation works before anything else is added.
 
-1:10-1:35
-- GitHub request PR reviewer
+0:30 - 1:10
+GITHUB FAST PATH
+Implement:
+- get_github_item(issue_or_pr)
+- assign_github_issue(issue, person)
 
-1:35-2:00
-- Slack post message / DM
+Use a dedicated demo repository with predictable fixtures:
+- Issue #12: authentication timeout bug
+- Issue #42: retry / HTTP 429 issue
+- PR #18: proposed authentication fix
 
-2:00-2:30
-- Meeting UI
-- Agent activity feed
-- Clean demo state
+Add basic meeting_state updates when an issue/PR is retrieved.
 
-2:30-3:00
-- Freeze features
-- Rehearse exact demo
-- Fix failures
-- Improve reliability and presentation
+Success condition:
+"Handoff, pull up issue 12."
+Then:
+"Assign that to me."
+works end-to-end.
 
-FEATURE FREEZE RULE
-At ~2 hours, stop adding capabilities.
-Use the final hour for reliability and demo polish.
+1:10 - 1:35
+PR + SLACK
+Implement:
+- request_pr_review(pr, person)
+- send_slack_message(person_or_channel, message)
 
-PRIORITY ORDER
+Keep Slack output-only.
 
-MUST WORK
-1. Realtime voice
-2. Contextual reference resolution
-3. One GitHub read
-4. One GitHub write
-5. One Slack message
-6. Spoken confirmation
+Use:
+- one free workspace
+- #engineering
+- optional #product
+- current user's DM
 
-VERY GOOD IF TIME PERMITS
-- PR review request
-- confirmation before consequential actions
-- pretty Slack Block Kit message
-- clickable links
-- action timeline
+Success condition:
+"Request me on PR 18 and tell engineering."
+causes both real side effects.
 
-CUT FIRST IF TIME IS SHORT
-- create issue
-- multiple contacts
-- fancy Slack formatting
-- sophisticated approval UI
+1:35 - 2:05
+CONTEXT + APPROVAL + INTERRUPTION RELIABILITY
+Implement:
+- meeting_state
+- people identity mapping
+- pending_action
+- confirmation/correction behavior for consequential actions
+
+Test:
+"Assign it to Sarah."
+Handoff starts confirmation.
+User interrupts:
+"Actually, assign it to me."
+Handoff updates pending_action before execution.
+
+Success condition:
+No accidental execution of the superseded action.
+
+2:05 - 2:25
+AGENT ACTIVITY PANEL
+Build only a small judge-visible timeline.
+
+Minimum events:
+- context_resolved
+- action_proposed
+- approval_received
+- action_started
+- action_completed
+- action_failed
+
+Example:
+
+CONTEXT
+"that" -> GitHub #12
+
+ACTION
+Assign #12 -> Guru
+
+RESULT
+✓ GitHub #12 assigned
+
+Use LiveKit room/data messaging.
+Do not create a second backend transport unless necessary.
+
+2:25 - 3:00
+FEATURE FREEZE
+Stop adding core features.
+
+Use this time for:
+- clean demo state
+- repeatable fixture reset
+- failure handling
+- secrets/config checks
+- latency reduction
+- exact demo rehearsal
+- UI cleanup
+- readable action events
+- spoken response polish
+
+MUST WORK BEFORE ANY STRETCH FEATURE
+1. LiveKit meeting
+2. GPT-Live-1 realtime conversation
+3. interruption
+4. contextual reference resolution
+5. GitHub read
+6. GitHub write
+7. Slack message
+8. spoken confirmation
+9. Agent Activity panel
+10. demo reset/repeatability
+
+STRETCH FEATURE — ONLY AFTER CORE IS STABLE
+Add one deep-work task:
+
+start_repo_task(repo, objective, github_context)
+
+Possible implementation:
+GPT-Live-1
+-> fast reasoning
+-> start_repo_task(...)
+-> OpenAI Agents API / coding harness
+-> repository investigation
+-> task progress events
+-> result returned to meeting
+
+Example:
+"Handoff, investigate why that auth issue is happening."
+
+Do not use this path for:
+- assigning an issue
+- fetching a PR
+- sending a Slack message
+- requesting a reviewer
+
+Those remain direct fast tools.
+
+If GPT-6 Astra API access is available:
+- use it for the deep coding/repository task
+- do NOT put Astra on every realtime voice turn
+
+MCP POLICY
+Realtime path:
+- prefer tiny direct GitHub/Slack functions
+
+Deep-work path:
+- GitHub MCP may be useful if the agent needs broad repository/issue/PR exploration
+
+Do not spend core implementation time wiring a giant MCP surface.
+
+FALLBACK ORDER IF TIME IS SHORT
+Cut first:
+1. Agents API deep-work feature
+2. GitHub MCP
+3. create_github_issue
+4. multiple contacts
+5. fancy Slack formatting
+6. sophisticated approval behavior
+7. decorative UI
+
+Never cut:
+- realtime conversation
+- reference resolution
+- one GitHub side effect
+- one Slack side effect
+- spoken confirmation
+- visible action trace
+
+FINAL RULE
+A boring-looking action that works every time is worth more than a sophisticated agent pipeline that fails on stage.
