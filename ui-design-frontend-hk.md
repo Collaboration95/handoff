@@ -178,17 +178,17 @@ An agent event should read like a compact work record, not a chat bubble. Use
 a consistent anatomy:
 
 ```text
-CONTEXT RESOLVED                              10:42
-“that issue” → GitHub #12
-Authentication timeout · High priority
+EVIDENCE CHECKED                              10:42
+September work → signed amendment + acceptance record
+8 accepted − 2 already billed = 6 billable units
 
 ACTION PROPOSED
-Assign GitHub #12 to Guru
-Requires verbal confirmation
+Create sandbox invoice draft
+Awaiting approval
 ```
 
 - Put the event kind in a small label, then state the outcome in plain English.
-- Use links or a secondary action for source objects such as GitHub #12, not a
+- Use links or a secondary action for source objects such as the signed amendment, not a
   wall of raw URLs or IDs.
 - Group one causal chain together: context → proposal → approval → result.
 - Use a vertical rule, small status glyph, or aligned timeline marker to convey
@@ -196,13 +196,12 @@ Requires verbal confirmation
 - Show a timestamp only when it helps auditability, and use concise local time.
 
 For a proposed consequential action, show the target and expected side effect
-unambiguously. The primary visual state is **Awaiting spoken confirmation**;
-buttons are an optional accessible fallback, not a replacement for the
-conversational approval model. “Cancel” or “Correct” must be visually available
+unambiguously. For the current finance demo, use **Awaiting approval** and an explicit button
+bound to the proposal. Mixed audio does not establish which person approved. “Cancel” or “Correct” must be visually available
 without competing with the confirm action.
 
 For completed work, show what happened and where. For failure, say what failed
-and give the user a next action, such as retrying or opening the GitHub item.
+and give the user a next action, such as retrying or opening the invoice record.
 Do not use celebratory green checkmarks without a human-readable result.
 
 ### Controls
@@ -228,8 +227,7 @@ Motion should communicate causality, not decorate the screen.
 - Respect reduced-motion preferences; status must remain understandable with no
   animation.
 
-Optimistic UI is acceptable only when labeled as pending. A GitHub assignment,
-Slack delivery, or payment-link creation cannot be visually presented as done
+Optimistic UI is acceptable only when labeled as pending. An invoice draft creation or external delivery cannot be visually presented as done
 before its tool result arrives.
 
 ## Content rules
@@ -238,10 +236,10 @@ Write interface language like a precise teammate:
 
 | Prefer | Avoid |
 | --- | --- |
-| “I found GitHub #12: Authentication timeout.” | “Data retrieval successful.” |
-| “Awaiting your confirmation to assign #12 to Guru.” | “Action queued.” |
-| “Assigned #12 to Guru and sent the Slack DM.” | “Your request has been processed.” |
-| “Couldn’t send the message. Slack returned an access error.” | “Something went wrong.” |
+| “The signed amendment sets the unit price at SGD90.” | “Data retrieval successful.” |
+| “Approve creating a draft for six accepted units.” | “Action queued.” |
+| “Draft created; Airwallex readback matches the approved invoice.” | “Your request has been processed.” |
+| “Draft created, but adding its line item failed.” | “Something went wrong.” |
 
 Do not invent activity, names, issue details, or integrations for visual
 polish. Clearly distinguish demo fixtures from live data when fixtures are in
@@ -255,7 +253,7 @@ Before considering a Handoff UI change complete, verify:
 - The currently pending or running action is visible without scrolling.
 - A non-technical observer can tell whether Handoff has acted, is waiting, or
   failed in under five seconds.
-- Context resolution is shown as evidence, but does not overwhelm the meeting.
+- Context resolution is shown as evidence, but does not overwhelm the current action.
 - Approval and correction paths are equally clear, keyboard reachable, and
   cannot be mistaken for completion.
 - Important state is expressed with text and icon/structure as well as colour.
