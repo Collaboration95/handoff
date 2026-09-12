@@ -1,3 +1,7 @@
+SUPERSEDED — The team confirmed a full pivot to finance on 2026-09-12.
+Use superpowers/plans/2026-09-12-finance-outcomes.md for the current proposal.
+The original meeting-assistant integration guide below is retained as history.
+
 HANDOFF — OPENAI / PARTNER TECHNOLOGY INTEGRATION GUIDE
 Last updated: 2026-09-12
 

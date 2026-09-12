@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Handoff · Financial actions, verified.</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas: #f8f9fc;
+      --surface: #fff;
+      --ink: #151a31;
+      --muted: #66708a;
+      --rule: #e2e6f0;
+      --blue: #2026c9;
+      --wash: #f0f1ff;
+      --success: #087a55;
+      --warning: #a85b00;
+      --danger: #b42318;
+      --radius: 6px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, select, input { font: inherit; }
+    button, select { min-height: 40px; }
+    button:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible {
+      outline: 3px solid #9aa1ff;
+      outline-offset: 2px;
+    }
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--rule);
+      min-height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 720; }
+    .brand-mark { width: 18px; height: 18px; background: var(--blue); border-radius: 4px; }
+    .room { color: var(--muted); font-size: 13px; }
+    .shell { max-width: 1280px; margin: 0 auto; padding: 36px 32px 64px; }
+    .eyebrow { color: var(--blue); font-size: 12px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { margin: 8px 0 8px; font-size: clamp(28px, 4vw, 38px); line-height: 1.12; letter-spacing: -.025em; }
+    .lead { margin: 0; max-width: 760px; color: var(--muted); font-size: 16px; }
+    .services { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 32px; }
+    .service, .badge {
+      display: inline-flex; align-items: center; gap: 7px;
+      border: 1px solid var(--rule); border-radius: 999px; background: var(--surface);
+      padding: 6px 10px; font-size: 12px; font-weight: 650;
+    }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+    .service.ready .dot { background: var(--success); }
+    .service.warn .dot { background: var(--warning); }
+    .grid { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 24px; align-items: start; }
+    .main, .rail { display: grid; gap: 20px; }
+    .rail { position: sticky; top: 20px; }
+    .panel { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); }
+    .panel-head { padding: 18px 20px; border-bottom: 1px solid var(--rule); display: flex; justify-content: space-between; gap: 16px; align-items: start; }
+    .panel-body { padding: 20px; }
+    h2 { margin: 0; font-size: 19px; letter-spacing: -.01em; }
+    h3 { margin: 0 0 4px; font-size: 14px; }
+    .muted { color: var(--muted); }
+    .small { font-size: 12px; }
+    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+    label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 650; }
+    select { width: 100%; border: 1px solid var(--rule); border-radius: 5px; background: white; color: var(--ink); padding: 8px 10px; }
+    .switch { display: flex; align-items: center; gap: 10px; border: 1px solid var(--rule); padding: 9px 10px; border-radius: 5px; color: var(--ink); }
+    .switch input { width: 18px; height: 18px; accent-color: var(--blue); }
+    .objective { font-size: 18px; line-height: 1.45; font-weight: 620; margin: 8px 0 14px; }
+    .state { display: flex; gap: 9px; align-items: center; font-weight: 700; }
+    .state .dot { width: 9px; height: 9px; background: var(--warning); }
+    .state.success .dot { background: var(--success); }
+    .state.danger .dot { background: var(--danger); }
+    .notice { background: var(--wash); border-left: 3px solid var(--blue); padding: 10px 12px; margin: 14px 0; color: #353b68; }
+    .actions { display: grid; gap: 10px; margin-top: 18px; }
+    button { border: 1px solid var(--rule); border-radius: 5px; padding: 9px 14px; background: white; color: var(--ink); cursor: pointer; font-weight: 680; }
+    button.primary { background: var(--blue); border-color: var(--blue); color: white; }
+    button.danger { color: var(--danger); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--rule); }
+    .evidence { padding: 18px 20px; border-right: 1px solid var(--rule); }
+    .evidence:last-child { border-right: 0; }
+    .number { margin: 12px 0 4px; font-size: 24px; font-weight: 730; letter-spacing: -.02em; }
+    details { margin-top: 12px; }
+    summary { color: var(--blue); cursor: pointer; font-weight: 650; }
+    pre { overflow: auto; font-size: 11px; background: var(--canvas); padding: 12px; border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .comparison { display: grid; grid-template-columns: 1fr 1fr; }
+    .draft { padding: 20px; }
+    .draft + .draft { border-left: 1px solid var(--rule); background: #fbfbff; }
+    .facts { margin: 16px 0 0; }
+    .fact { display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-top: 1px solid var(--rule); }
+    .fact strong.changed { color: var(--blue); }
+    .checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .baseline-failures { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--rule); }
+    .baseline-failures[hidden] { display: none; }
+    .baseline-failures .checks { margin-top: 10px; }
+    .check { border: 1px solid var(--rule); border-radius: 4px; padding: 10px; display: flex; gap: 9px; align-items: start; }
+    .check.pass .dot { background: var(--success); margin-top: 6px; }
+    .check.fail .dot { background: var(--danger); margin-top: 6px; }
+    .timeline { list-style: none; padding: 0; margin: 0; }
+    .event { position: relative; padding: 0 0 18px 22px; border-left: 1px solid var(--rule); margin-left: 4px; }
+    .event:last-child { padding-bottom: 0; }
+    .event::before { content: ""; position: absolute; width: 8px; height: 8px; border-radius: 50%; background: var(--blue); left: -5px; top: 5px; }
+    .event-type { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 730; }
+    .event time { color: var(--muted); font-size: 11px; display: block; margin-top: 3px; }
+    .empty { color: var(--muted); padding: 4px 0; }
+    .result-link { color: var(--blue); font-weight: 650; }
+    #live-status { position: fixed; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    @media (max-width: 860px) {
+      .topbar { padding: 0 18px; }
+      .shell { padding: 28px 18px 48px; }
+      .grid { grid-template-columns: 1fr; }
+      .rail { position: static; order: -1; }
+      .comparison, .evidence-grid, .checks { grid-template-columns: 1fr; }
+      .draft + .draft, .evidence + .evidence { border-left: 0; border-right: 0; border-top: 1px solid var(--rule); }
+      .controls { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span>Handoff</div>
+    <div class="room" id="room-state">Room status waiting for heartbeat</div>
+  </header>
+  <main class="shell">
+    <div class="eyebrow">Financial actions, verified.</div>
+    <h1>Create the right invoice</h1>
+    <p class="lead">Check a proposed invoice against the signed agreement and accepted work, approve the exact workflow, then verify the sandbox draft by reading it back.</p>
+    <div class="services" id="services" aria-label="Service readiness"></div>
+
+    <div class="grid">
+      <div class="main">
+        <section class="panel" aria-labelledby="evidence-title">
+          <div class="panel-head">
+            <div><h2 id="evidence-title">Source evidence</h2><div class="muted">Platform-supplied synthetic records</div></div>
+            <span class="badge">Synthetic input</span>
+          </div>
+          <div class="evidence-grid">
+            <article class="evidence">
+              <h3>Effective signed contract</h3><div class="muted small" id="contract-id">—</div>
+              <div class="number" id="contract-price">—</div><div class="muted">per accepted unit</div>
+              <details><summary>View contract fields</summary><pre id="contract-raw">No proposal loaded.</pre></details>
+            </article>
+            <article class="evidence">
+              <h3>Accepted work</h3><div class="muted small" id="fulfilment-id">—</div>
+              <div class="number"><span id="billable">—</span> billable</div><div class="muted" id="accepted-copy">—</div>
+              <details><summary>View fulfilment fields</summary><pre id="fulfilment-raw">No proposal loaded.</pre></details>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="comparison-title">
+          <div class="panel-head"><div><h2 id="comparison-title">Invoice comparison</h2><div class="muted">Original proposal and selected invoice</div></div><span class="badge" id="mode-badge">Live model baseline</span></div>
+          <div class="comparison">
+            <article class="draft"><h3>Original</h3><div class="muted small" id="baseline-label">Waiting for approval</div><div class="facts" id="baseline-facts"></div></article>
+            <article class="draft"><h3>Selected</h3><div class="muted small" id="selected-label">No verified invoice yet</div><div class="facts" id="selected-facts"></div></article>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="checks-title">
+          <div class="panel-head"><div><h2 id="checks-title">Field checks</h2><div class="muted">Every financial field must match source evidence</div></div></div>
+          <div class="panel-body">
+            <div class="checks" id="checks"><div class="empty">Approve the workflow to run checks.</div></div>
+            <details class="baseline-failures" id="baseline-failures" hidden>
+              <summary id="baseline-failures-summary">Original proposal failed checks</summary>
+              <div class="checks" id="baseline-failures-list"></div>
+            </details>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="result-title">
+          <div class="panel-head"><div><h2 id="result-title">Run evidence</h2><div class="muted">Actual trace, usage, latency, and external readback</div></div></div>
+          <div class="panel-body" id="run-evidence"><div class="empty">No run evidence yet.</div></div>
+        </section>
+      </div>
+
+      <aside class="rail">
+        <section class="panel" aria-labelledby="action-title">
+          <div class="panel-body">
+            <div class="eyebrow">Current action</div><h2 id="action-title" class="objective">Create the invoice for accepted September implementation work.</h2>
+            <div class="state" id="proposal-state"><span class="dot"></span><span>Preparing proposal</span></div>
+            <div class="notice" id="authorization-copy">Approval authorizes a sandbox draft only after all checks pass.</div>
+            <div class="controls">
+              <label>Evidence case<select id="case-select"></select></label>
+              <label class="switch"><input type="checkbox" id="fault-toggle">Injected stale draft</label>
+            </div>
+            <div class="actions">
+              <button class="primary" id="approve">Approve invoice workflow</button>
+              <button class="primary" id="create" disabled>Create sandbox draft</button>
+              <button class="danger" id="cancel">Cancel proposal</button>
+            </div>
+          </div>
+        </section>
+        <section class="panel" aria-labelledby="activity-title">
+          <div class="panel-head"><div><h2 id="activity-title">Activity</h2><div class="muted">Current proposal only</div></div></div>
+          <div class="panel-body"><ol class="timeline" id="activity"><li class="empty">No activity yet.</li></ol></div>
+        </section>
+      </aside>
+    </div>
+    <div id="live-status" role="status" aria-live="polite"></div>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const state = { proposal: null, health: null, busy: false, activityIds: new Set() };
+    const objective = "Create the invoice for accepted September implementation work.";
+
+    function money(minor, currency = "SGD") {
+      if (minor === null || minor === undefined) return "—";
+      return new Intl.NumberFormat("en-SG", { style: "currency", currency }).format(Number(minor) / 100);
+    }
+    function announce(message) { $("live-status").textContent = message; }
+    function safeUrl(value) {
+      try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) ? url.href : null; }
+      catch { return null; }
+    }
+    async function request(path, options = {}) {
+      const response = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+      return data;
+    }
+    function setBusy(value, message = "") {
+      state.busy = value;
+      renderActions();
+      if (message) announce(message);
+    }
+    function service(name, status, ready) {
+      const item = document.createElement("span");
+      item.className = `service ${ready ? "ready" : "warn"}`;
+      const dot = document.createElement("span"); dot.className = "dot"; dot.setAttribute("aria-hidden", "true");
+      const label = document.createElement("span"); label.textContent = `${name} · ${status}`;
+      item.append(dot, label); return item;
+    }
+    function renderHealth() {
+      const h = state.health?.services; if (!h) return;
+      $("services").replaceChildren(
+        service("OpenAI", h.openai.ready ? "ready" : "not configured", h.openai.ready),
+        service("Airwallex", h.airwallex.ready ? "sandbox ready" : (h.airwallex.error || "not ready"), h.airwallex.ready),
+        service("Langfuse", h.langfuse.ready ? "ready" : "not configured", h.langfuse.ready),
+        service("LiveKit", h.livekit.connected ? `${h.livekit.human_microphones} microphones` : (h.livekit.stale ? "no current heartbeat" : "disconnected"), h.livekit.connected)
+      );
+      $("room-state").textContent = h.livekit.connected ? `Room ${h.livekit.room_name} · Live` : "Room status waiting for heartbeat";
+    }
+    function fact(label, value, changed = false) {
+      const row = document.createElement("div"); row.className = "fact";
+      const key = document.createElement("span"); key.className = "muted"; key.textContent = label;
+      const val = document.createElement("strong"); val.textContent = value; if (changed) val.className = "changed";
+      row.append(key, val); return row;
+    }
+    function renderDraft(target, draft, comparison) {
+      const el = $(target); el.replaceChildren();
+      if (!draft) { const empty = document.createElement("div"); empty.className = "empty"; empty.textContent = "No invoice available."; el.append(empty); return; }
+      const currency = draft.currency || "SGD";
+      const values = [
+        ["Quantity", String(draft.quantity)], ["Unit price", money(draft.unit_price_minor, currency)],
+        ["Tax", `${draft.tax_percent}%`], ["PO", draft.po_number || "—"], ["Contract", draft.contract_id || "—"]
+      ];
+      values.forEach(([label, value]) => {
+        const changed = comparison && ((label === "Quantity" && draft.quantity !== comparison.quantity) || (label === "Unit price" && draft.unit_price_minor !== comparison.unit_price_minor) || (label === "Contract" && draft.contract_id !== comparison.contract_id));
+        el.append(fact(label, value, changed));
+      });
+      el.append(fact("Subtotal", money(draft.quantity * draft.unit_price_minor, currency), comparison && draft.quantity * draft.unit_price_minor !== comparison.quantity * comparison.unit_price_minor));
+    }
+    function renderProposal() {
+      const p = state.proposal; if (!p) return;
+      $("action-title").textContent = p.objective;
+      $("mode-badge").textContent = p.fault_injection ? "Injected stale draft · controlled test" : "Live model baseline";
+      $("fault-toggle").checked = p.fault_injection;
+      $("case-select").value = p.case_name;
+      const requestData = p.request || {};
+      const contracts = requestData.contracts || [];
+      const contract = contracts.slice().sort((a,b) => String(a.effective_from).localeCompare(String(b.effective_from))).at(-1);
+      const fulfilment = requestData.fulfilment;
+      $("contract-id").textContent = contract?.id || "No effective contract";
+      $("contract-price").textContent = contract ? money(contract.unit_price_minor, contract.currency) : "—";
+      $("contract-raw").textContent = contract ? JSON.stringify(contract, null, 2) : "No contract evidence supplied.";
+      $("fulfilment-id").textContent = fulfilment?.id || "No fulfilment";
+      $("billable").textContent = fulfilment ? String(fulfilment.accepted_quantity - fulfilment.previously_invoiced_quantity) : "—";
+      $("accepted-copy").textContent = fulfilment ? `${fulfilment.accepted_quantity} accepted − ${fulfilment.previously_invoiced_quantity} previously billed` : "No fulfilment evidence supplied.";
+      $("fulfilment-raw").textContent = fulfilment ? JSON.stringify(fulfilment, null, 2) : "No fulfilment evidence supplied.";
+      const decision = p.decision;
+      renderDraft("baseline-facts", decision?.baseline || requestData.proposed, null);
+      renderDraft("selected-facts", decision?.selected, decision?.baseline || requestData.proposed);
+      $("baseline-label").textContent = p.fault_injection
+        ? "Injected stale draft · controlled test"
+        : decision?.baseline ? "Actual upstream baseline" : "Generated only after approval";
+      $("selected-label").textContent = decision?.selected ? (decision.status === "repaired" ? "Repaired and verified" : "Verified without changes") : "No verified invoice yet";
+      renderChecks(selectedGate(decision));
+      renderBaselineFailures(decision);
+      renderEvidence(p);
+      const labels = { pending: "Awaiting approval", checking: "Checking evidence", ready: "Ready for sandbox draft", needs_review: "Needs review", creating: "Creating sandbox draft", completed: "Draft created and readback verified", failed: "Draft not fully verified", cancelled: "Proposal cancelled" };
+      const stateEl = $("proposal-state"); stateEl.className = `state ${p.status === "completed" || p.status === "ready" ? "success" : p.status === "failed" || p.status === "cancelled" || p.status === "needs_review" ? "danger" : ""}`;
+      stateEl.lastElementChild.textContent = labels[p.status] || p.status;
+      $("authorization-copy").textContent = p.error ? `Status detail: ${p.error}` : "Approval authorizes a sandbox draft only after all checks pass. The voice agent cannot approve this workflow.";
+      renderActions();
+    }
+    function selectedGate(decision) {
+      if (!decision) return null;
+      if (decision.status !== "repaired" || !decision.selected) return decision.baseline_checks;
+      const selected = JSON.stringify(decision.selected);
+      const index = (decision.candidates || []).findIndex(candidate => JSON.stringify(candidate) === selected);
+      return index >= 0 ? decision.candidate_checks?.[index] : null;
+    }
+    function renderChecks(gate) {
+      const container = $("checks"); container.replaceChildren();
+      if (!gate) { const empty = document.createElement("div"); empty.className = "empty"; empty.textContent = "Approve the workflow to run checks."; container.append(empty); return; }
+      (gate.checks || []).forEach(item => {
+        container.append(checkCard(item));
+      });
+      (gate.review_reasons || []).forEach(reason => { const card = document.createElement("div"); card.className = "check fail"; card.textContent = reason; container.append(card); });
+    }
+    function checkCard(item) {
+      const card = document.createElement("div"); card.className = `check ${item.passed ? "pass" : "fail"}`;
+      const dot = document.createElement("span"); dot.className = "dot"; dot.setAttribute("aria-hidden", "true");
+      const text = document.createElement("div"); const title = document.createElement("strong"); title.textContent = `${item.rule}: ${item.passed ? "Pass" : "Check failed"}`;
+      const detail = document.createElement("div"); detail.className = "muted small"; detail.textContent = `Expected ${item.expected}; received ${item.actual}. Evidence: ${(item.evidence_ids || []).join(", ") || "policy"}.`;
+      text.append(title, detail); card.append(dot, text); return card;
+    }
+    function renderBaselineFailures(decision) {
+      const details = $("baseline-failures");
+      const list = $("baseline-failures-list");
+      list.replaceChildren();
+      const failures = (decision?.baseline_checks?.checks || []).filter(item => !item.passed);
+      details.hidden = failures.length === 0;
+      if (!failures.length) { details.open = false; return; }
+      $("baseline-failures-summary").textContent = `Original proposal: ${failures.length} failed ${failures.length === 1 ? "check" : "checks"}`;
+      failures.forEach(item => list.append(checkCard(item)));
+    }
+    function renderEvidence(p) {
+      const box = $("run-evidence"); box.replaceChildren();
+      const decision = p.decision; const invoice = p.invoice;
+      if (!decision && !invoice) { const empty = document.createElement("div"); empty.className = "empty"; empty.textContent = "No run evidence yet."; box.append(empty); return; }
+      if (decision) {
+        box.append(fact("Decision", decision.status || "—"), fact("Latency", `${decision.elapsed_ms ?? "—"} ms`), fact("Tokens", String(decision.usage?.total_tokens ?? "Not reported")));
+        const url = safeUrl(decision.trace_url); if (url) { const link = document.createElement("a"); link.className = "result-link"; link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; link.textContent = "Open actual Langfuse trace"; box.append(link); }
+        else { const local = document.createElement("p"); local.className = "muted"; local.textContent = "No hosted trace URL is available. Local field checks remain shown above."; box.append(local); }
+      }
+      if (invoice) {
+        box.append(fact("External stage", invoice.stage || "—"), fact("Invoice ID", invoice.invoice_id || "Not returned"), fact("Readback", invoice.verified ? "Verified" : "Not verified"));
+        const traceUrl = safeUrl(invoice.creation_trace_url); if (traceUrl) { const traceLink = document.createElement("a"); traceLink.className = "result-link"; traceLink.href = traceUrl; traceLink.target = "_blank"; traceLink.rel = "noopener noreferrer"; traceLink.textContent = "Open actual creation and readback trace"; box.append(traceLink); }
+        else if (invoice.creation_trace_status) { const traceState = document.createElement("p"); traceState.className = "muted"; traceState.textContent = `Creation trace: ${invoice.creation_trace_status}; no hosted URL available.`; box.append(traceState); }
+        const url = safeUrl(invoice.hosted_url); if (url && invoice.verified) { const link = document.createElement("a"); link.className = "result-link"; link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; link.textContent = "Open verified sandbox draft"; box.append(link); }
+      }
+    }
+    function renderActions() {
+      const p = state.proposal;
+      const operationRunning = state.busy || ["checking", "creating"].includes(p?.status);
+      $("case-select").disabled = operationRunning;
+      $("fault-toggle").disabled = operationRunning;
+      $("approve").disabled = state.busy || !p || p.status !== "pending";
+      $("create").disabled = state.busy || !p || p.status !== "ready" || !p.approved || !state.health?.services?.airwallex?.ready;
+      $("cancel").disabled = state.busy || !p || !["pending", "ready", "needs_review"].includes(p.status);
+    }
+    function renderActivity(data) {
+      const list = $("activity"); list.replaceChildren();
+      const currentEvents = (data.events || []).filter(event => !state.proposal || event.proposal_id === state.proposal.id).slice(-8).reverse();
+      if (!currentEvents.length) { const empty = document.createElement("li"); empty.className = "empty"; empty.textContent = "No activity yet."; list.append(empty); return; }
+      currentEvents.forEach(event => {
+        const li = document.createElement("li"); li.className = "event";
+        const type = document.createElement("div"); type.className = "event-type"; type.textContent = event.type.replaceAll("_", " ");
+        const message = document.createElement("div"); message.textContent = event.message;
+        const stamp = document.createElement("time"); stamp.dateTime = event.time; stamp.textContent = new Date(event.time).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+        li.append(type, message, stamp); list.append(li);
+      });
+    }
+    async function createProposal() {
+      setBusy(true, "Preparing a new proposal.");
+      try {
+        state.proposal = await request("/v1/proposals", { method: "POST", body: JSON.stringify({ objective, case_name: $("case-select").value || "showcase", fault_injection: $("fault-toggle").checked }) });
+        renderProposal(); announce("Proposal ready for approval.");
+      } catch (error) { announce(error.message); } finally { setBusy(false); }
+    }
+    async function approve() {
+      if (!state.proposal) return; setBusy(true, "Approval recorded. Checking invoice evidence.");
+      try { state.proposal = await request(`/v1/proposals/${encodeURIComponent(state.proposal.id)}/approve`, { method: "POST" }); renderProposal(); announce(state.proposal.status === "ready" ? "Checks passed. The sandbox draft may now be created." : "Checks completed. This proposal needs review."); }
+      catch (error) { announce(error.message); } finally { setBusy(false); }
+    }
+    async function createInvoice() {
+      if (!state.proposal) return; setBusy(true, "Creating and reading back the sandbox draft.");
+      try { state.proposal = await request("/v1/invoices/create", { method: "POST", body: JSON.stringify({ proposal_id: state.proposal.id }) }); renderProposal(); announce(state.proposal.status === "completed" ? "Sandbox draft created and readback verified." : "The sandbox draft was not fully verified."); }
+      catch (error) { announce(error.message); } finally { setBusy(false); }
+    }
+    async function cancel() {
+      if (!state.proposal) return; setBusy(true, "Cancelling proposal.");
+      try { state.proposal = await request(`/v1/proposals/${encodeURIComponent(state.proposal.id)}/cancel`, { method: "POST" }); renderProposal(); announce("Proposal cancelled."); }
+      catch (error) { announce(error.message); } finally { setBusy(false); }
+    }
+    async function poll() {
+      try {
+        const [health, current, activity] = await Promise.all([request("/health"), request("/v1/proposals/current"), request("/v1/activity")]);
+        state.health = health; if (current) state.proposal = current; renderHealth(); renderProposal(); renderActivity(activity);
+      } catch (error) { announce(`Status refresh failed: ${error.message}`); }
+    }
+    async function boot() {
+      try {
+        const catalog = await request("/v1/cases");
+        catalog.forEach(item => { const option = document.createElement("option"); option.value = item.name; option.textContent = item.name.replaceAll("_", " "); $("case-select").append(option); });
+        await poll(); if (!state.proposal) await createProposal(); await poll();
+      } catch (error) { announce(`Page setup failed: ${error.message}`); }
+      window.setInterval(poll, 2000);
+    }
+    $("approve").addEventListener("click", approve); $("create").addEventListener("click", createInvoice); $("cancel").addEventListener("click", cancel);
+    $("case-select").addEventListener("change", createProposal); $("fault-toggle").addEventListener("change", createProposal);
+    boot();
+  </script>
+</body>
+</html>

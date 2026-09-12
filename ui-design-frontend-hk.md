@@ -26,19 +26,42 @@ when it improves clarity, trust, and demo comprehension for Handoff.
 
 ## Product hierarchy
 
-At desktop widths, give the live meeting the most visual weight and make the
-agent activity panel the second most prominent region. A viewer should be able
-to scan the UI in this order:
+### Current finance demo: two-hour build
 
-1. **Room state** — meeting name, live/reconnecting state, elapsed time, and
-   participant count.
-2. **Conversation** — people and Handoff as participants, with clear speaking
-   and muted states.
-3. **Handoff’s current understanding** — a concise contextual statement such
-   as “`that issue` → GitHub #12 · Authentication timeout”.
-4. **Action status** — proposed, waiting for approval, working, completed, or
-   failed. Never make a real side effect feel hidden or automatic.
-5. **Activity history** — short, time-ordered evidence showing what happened.
+Two people join the hosted LiveKit room through existing open-source clients.
+Handoff's web page is the companion activity and approval view. Reuse the visual
+system below in one static HTML/CSS/JS page; avoid a new framework, participant
+grid, call controls, or custom conferencing implementation for this demo.
+
+A viewer should be able to scan the page in this order:
+
+1. **Current action** — the fixed invoice objective, actual state, and one
+   relevant primary button. Use “Approve check” for a proposed objective and
+   “Create sandbox draft” only after the selected invoice passes checks.
+2. **Invoice comparison** — original and selected quantity, unit price, tax,
+   and total. Display the specific changed fields and their supporting records.
+3. **Source evidence** — effective signed contract, accepted work, previously
+   billed quantity, and purchase order. Expand raw details on demand.
+4. **Activity history** — a compact, time-ordered record of proposal, approval,
+   checks, repair if needed, creation, and actual readback.
+5. **Service state** — compact OpenAI, LiveKit, Airwallex sandbox, and Langfuse
+   readiness. Only show room counts or “Live” when the server reports them.
+
+Put the invoice and evidence in the main column and the current action/activity
+in a narrower column. On small screens, show the current action first. Keep
+approval visible while work is pending; disable repeated submissions and bind
+approval to the exact proposal. An altered proposal requires fresh approval.
+
+Distinguish “draft created” from “readback verified”; show partial or uncertain
+external writes with any known invoice ID. “No changes needed” is a valid result.
+Do not manufacture three alternatives when the initial invoice passes. Keep
+synthetic inputs and injected faults visibly labelled, and keep recorded metrics
+separate from live results. A Langfuse link must refer to an actual trace; absent
+configuration has an explicit empty state. Slack delivery is a stretch goal.
+
+For this build, prioritize a readable comparison, exact approval states, keyboard
+focus, safe text rendering, and an aria-live status message. Defer custom icons,
+animation, avatars, charts, transcript search, and a conferencing redesign.
 
 Do not let a generic dashboard, a large empty hero, decorative charts, or a
 long transcript outrank the action trace. Handoff is not a transcription or
@@ -101,7 +124,11 @@ Do not make every region a rounded floating container.
 
 ## Layout patterns
 
-### App shell
+### App shell (future embedded meeting client)
+
+The embedded meeting patterns below are a reference for later work. For the
+current finance demo, use the companion-page hierarchy above and existing
+LiveKit clients.
 
 Use a compact top bar with the Handoff mark/name at the left, room state near
 the centre or title region, and quiet utility controls at the right. Keep the
@@ -151,17 +178,17 @@ An agent event should read like a compact work record, not a chat bubble. Use
 a consistent anatomy:
 
 ```text
-CONTEXT RESOLVED                              10:42
-“that issue” → GitHub #12
-Authentication timeout · High priority
+EVIDENCE CHECKED                              10:42
+September work → signed amendment + acceptance record
+8 accepted − 2 already billed = 6 billable units
 
 ACTION PROPOSED
-Assign GitHub #12 to Guru
-Requires verbal confirmation
+Create sandbox invoice draft
+Awaiting approval
 ```
 
 - Put the event kind in a small label, then state the outcome in plain English.
-- Use links or a secondary action for source objects such as GitHub #12, not a
+- Use links or a secondary action for source objects such as the signed amendment, not a
   wall of raw URLs or IDs.
 - Group one causal chain together: context → proposal → approval → result.
 - Use a vertical rule, small status glyph, or aligned timeline marker to convey
@@ -169,13 +196,12 @@ Requires verbal confirmation
 - Show a timestamp only when it helps auditability, and use concise local time.
 
 For a proposed consequential action, show the target and expected side effect
-unambiguously. The primary visual state is **Awaiting spoken confirmation**;
-buttons are an optional accessible fallback, not a replacement for the
-conversational approval model. “Cancel” or “Correct” must be visually available
+unambiguously. For the current finance demo, use **Awaiting approval** and an explicit button
+bound to the proposal. Mixed audio does not establish which person approved. “Cancel” or “Correct” must be visually available
 without competing with the confirm action.
 
 For completed work, show what happened and where. For failure, say what failed
-and give the user a next action, such as retrying or opening the GitHub item.
+and give the user a next action, such as retrying or opening the invoice record.
 Do not use celebratory green checkmarks without a human-readable result.
 
 ### Controls
@@ -201,8 +227,7 @@ Motion should communicate causality, not decorate the screen.
 - Respect reduced-motion preferences; status must remain understandable with no
   animation.
 
-Optimistic UI is acceptable only when labeled as pending. A GitHub assignment,
-Slack delivery, or payment-link creation cannot be visually presented as done
+Optimistic UI is acceptable only when labeled as pending. An invoice draft creation or external delivery cannot be visually presented as done
 before its tool result arrives.
 
 ## Content rules
@@ -211,10 +236,10 @@ Write interface language like a precise teammate:
 
 | Prefer | Avoid |
 | --- | --- |
-| “I found GitHub #12: Authentication timeout.” | “Data retrieval successful.” |
-| “Awaiting your confirmation to assign #12 to Guru.” | “Action queued.” |
-| “Assigned #12 to Guru and sent the Slack DM.” | “Your request has been processed.” |
-| “Couldn’t send the message. Slack returned an access error.” | “Something went wrong.” |
+| “The signed amendment sets the unit price at SGD90.” | “Data retrieval successful.” |
+| “Approve creating a draft for six accepted units.” | “Action queued.” |
+| “Draft created; Airwallex readback matches the approved invoice.” | “Your request has been processed.” |
+| “Draft created, but adding its line item failed.” | “Something went wrong.” |
 
 Do not invent activity, names, issue details, or integrations for visual
 polish. Clearly distinguish demo fixtures from live data when fixtures are in
@@ -228,7 +253,7 @@ Before considering a Handoff UI change complete, verify:
 - The currently pending or running action is visible without scrolling.
 - A non-technical observer can tell whether Handoff has acted, is waiting, or
   failed in under five seconds.
-- Context resolution is shown as evidence, but does not overwhelm the meeting.
+- Context resolution is shown as evidence, but does not overwhelm the current action.
 - Approval and correction paths are equally clear, keyboard reachable, and
   cannot be mistaken for completion.
 - Important state is expressed with text and icon/structure as well as colour.

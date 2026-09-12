@@ -1,3 +1,7 @@
+SUPERSEDED — The team confirmed a full pivot to finance on 2026-09-12.
+Use superpowers/specs/2026-09-12-finance-outcomes-design.md for the current proposal.
+The original meeting-assistant architecture below is retained as history.
+
 HANDOFF V2 — ARCHITECTURE DECISION / MINIMUM-PATH IMPLEMENTATION
 Last updated: 2026-09-12
 
