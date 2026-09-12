@@ -8,6 +8,8 @@ Implemented a localhost FastAPI application and one responsive static approval/a
 
 The server owns proposal IDs and immutable request snapshots. A fresh proposal cancels any earlier nonterminal proposal. Approval runs the existing checker and at most one bounded repair. Creation requires the current approved proposal, parses and revalidates the stored selected draft, uses the Airwallex adapter's lock/journal, and marks `completed` only when `invoice.verified` is exactly `true`. Successful, partial, and uncertain adapter results also reserve the billing reference across later proposal IDs in the process.
 
+A proposal cannot be replaced while its checks or external creation are in progress; the API returns `409 proposal_in_progress` before mutating state. Two held-await concurrency tests cover both phases. During those phases the UI also disables the case and fault-injection selectors. For repaired decisions the field-check panel resolves the gate belonging to the selected candidate, while the original invoice remains explicitly labelled as an injected controlled test when that mode is active.
+
 ## API contract
 
 - `POST /v1/proposals` accepts `{objective, case_name="showcase", fault_injection=false}` and returns a Proposal.
@@ -44,7 +46,7 @@ Focused API result after implementation:
 
 ```text
 PYTHONPATH=finance .venv/bin/pytest finance/tests/test_api.py -q
-13 passed
+15 passed
 ```
 
 Full finance suite after integration with tracing and voice:

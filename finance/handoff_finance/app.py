@@ -138,6 +138,11 @@ class FinanceState:
         request: InvoiceRequest | None = None,
         approved: bool = False,
     ) -> dict[str, Any]:
+        if self.current_id and self.proposals[self.current_id]["status"] in {
+            "checking",
+            "creating",
+        }:
+            raise HTTPException(status_code=409, detail="proposal_in_progress")
         try:
             source_request = request or build_case(case_name)
         except KeyError as exc:

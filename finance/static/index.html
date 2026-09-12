@@ -280,15 +280,24 @@
       const decision = p.decision;
       renderDraft("baseline-facts", decision?.baseline || requestData.proposed, null);
       renderDraft("selected-facts", decision?.selected, decision?.baseline || requestData.proposed);
-      $("baseline-label").textContent = decision?.baseline ? "Actual upstream baseline" : "Generated only after approval";
+      $("baseline-label").textContent = p.fault_injection
+        ? "Injected stale draft · controlled test"
+        : decision?.baseline ? "Actual upstream baseline" : "Generated only after approval";
       $("selected-label").textContent = decision?.selected ? (decision.status === "repaired" ? "Repaired and verified" : "Verified without changes") : "No verified invoice yet";
-      renderChecks(decision?.baseline_checks || decision?.candidate_checks?.at(-1));
+      renderChecks(selectedGate(decision));
       renderEvidence(p);
       const labels = { pending: "Awaiting approval", checking: "Checking evidence", ready: "Ready for sandbox draft", needs_review: "Needs review", creating: "Creating sandbox draft", completed: "Draft created and readback verified", failed: "Draft not fully verified", cancelled: "Proposal cancelled" };
       const stateEl = $("proposal-state"); stateEl.className = `state ${p.status === "completed" || p.status === "ready" ? "success" : p.status === "failed" || p.status === "cancelled" || p.status === "needs_review" ? "danger" : ""}`;
       stateEl.lastElementChild.textContent = labels[p.status] || p.status;
       $("authorization-copy").textContent = p.error ? `Status detail: ${p.error}` : "Approval authorizes a sandbox draft only after all checks pass. The voice agent cannot approve this workflow.";
       renderActions();
+    }
+    function selectedGate(decision) {
+      if (!decision) return null;
+      if (decision.status !== "repaired" || !decision.selected) return decision.baseline_checks;
+      const selected = JSON.stringify(decision.selected);
+      const index = (decision.candidates || []).findIndex(candidate => JSON.stringify(candidate) === selected);
+      return index >= 0 ? decision.candidate_checks?.[index] : null;
     }
     function renderChecks(gate) {
       const container = $("checks"); container.replaceChildren();
@@ -320,6 +329,9 @@
     }
     function renderActions() {
       const p = state.proposal;
+      const operationRunning = state.busy || ["checking", "creating"].includes(p?.status);
+      $("case-select").disabled = operationRunning;
+      $("fault-toggle").disabled = operationRunning;
       $("approve").disabled = state.busy || !p || p.status !== "pending";
       $("create").disabled = state.busy || !p || p.status !== "ready" || !p.approved || !state.health?.services?.airwallex?.ready;
       $("cancel").disabled = state.busy || !p || !["pending", "ready", "needs_review"].includes(p.status);

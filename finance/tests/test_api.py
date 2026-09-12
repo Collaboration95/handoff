@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from dataclasses import dataclass, field
 
 from fastapi.testclient import TestClient
@@ -168,6 +169,83 @@ def test_stale_or_cancelled_proposal_cannot_be_approved_or_created() -> None:
     assert cancelled.json()["status"] == "cancelled"
     assert api.post("/v1/invoices/create", json={"proposal_id": second["id"]}).status_code == 409
     assert adapter.calls == []
+
+
+def test_new_proposal_is_rejected_while_approval_checks_are_in_progress() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingPlanner(FakePlanner):
+        async def initial(self, request):
+            started.set()
+            await asyncio.to_thread(release.wait)
+            return self.initial_result
+
+    api, _ = client(planner=BlockingPlanner())
+    first = api.post(
+        "/v1/proposals",
+        json={"objective": "First", "case_name": "showcase", "fault_injection": False},
+    ).json()
+    responses = []
+    worker = threading.Thread(
+        target=lambda: responses.append(api.post(f"/v1/proposals/{first['id']}/approve"))
+    )
+    worker.start()
+    assert started.wait(timeout=2)
+    try:
+        replacement = api.post("/v1/proposals", json={"objective": "Second"})
+        current = api.get("/v1/proposals/current").json()
+
+        assert replacement.status_code == 409
+        assert replacement.json()["detail"] == "proposal_in_progress"
+        assert current["id"] == first["id"]
+        assert current["status"] == "checking"
+        assert current["approved"] is True
+    finally:
+        release.set()
+        worker.join(timeout=2)
+    assert responses[0].json()["status"] == "ready"
+
+
+def test_new_proposal_is_rejected_while_invoice_creation_is_in_progress() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingAirwallex(FakeAirwallex):
+        async def create_verified_invoice(self, request, draft):
+            self.calls.append((request, draft))
+            started.set()
+            await asyncio.to_thread(release.wait)
+            return dict(self.result)
+
+    adapter = BlockingAirwallex()
+    api, _ = client(airwallex=adapter)
+    first = api.post(
+        "/v1/proposals",
+        json={"objective": "First", "case_name": "showcase", "fault_injection": True},
+    ).json()
+    assert api.post(f"/v1/proposals/{first['id']}/approve").json()["status"] == "ready"
+    responses = []
+    worker = threading.Thread(
+        target=lambda: responses.append(
+            api.post("/v1/invoices/create", json={"proposal_id": first["id"]})
+        )
+    )
+    worker.start()
+    assert started.wait(timeout=2)
+    try:
+        replacement = api.post("/v1/proposals", json={"objective": "Second"})
+        current = api.get("/v1/proposals/current").json()
+
+        assert replacement.status_code == 409
+        assert replacement.json()["detail"] == "proposal_in_progress"
+        assert current["id"] == first["id"]
+        assert current["status"] == "creating"
+        assert current["approved"] is True
+    finally:
+        release.set()
+        worker.join(timeout=2)
+    assert responses[0].json()["status"] == "completed"
 
 
 def test_create_revalidates_stored_selection_and_never_trusts_browser_fields() -> None:
