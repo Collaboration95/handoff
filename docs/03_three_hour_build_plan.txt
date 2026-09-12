@@ -54,6 +54,7 @@ DO NOT BUILD
 - database
 - sophisticated approval UI
 - large MCP tool surface in the realtime path
+- production payments infrastructure, cards, payouts, beneficiaries, or additional Airwallex workflows
 
 CORE SYSTEM
 
@@ -240,9 +241,28 @@ If GPT-6 Astra API access is available:
 - use it for the deep coding/repository task
 - do NOT put Astra on every realtime voice turn
 
+OPTIONAL AIRWALLEX SANDBOX EXTENSION — ONLY AFTER CORE IS STABLE
+Treat this as one small sponsor demo extension, not a new product surface.
+
+Implement only:
+- create_airwallex_payment_link(invoice_or_amount)
+- resolve the invoice and amount from meeting context
+- call the Airwallex Developer MCP against its sandbox
+- optionally send the generated link through Slack
+- publish the action trace and verbally confirm completion
+
+Demo phrase:
+"Handoff, create a payment link for that invoice."
+
+Do not implement production AgentOS, payments infrastructure, cards, payouts, beneficiaries, or any additional Airwallex workflow. If the sandbox MCP is not already ready, cut this feature immediately.
+
 MCP POLICY
 Realtime path:
 - prefer tiny direct GitHub/Slack functions
+
+Optional partner extension:
+- use the Airwallex Developer MCP only for the single sandbox payment-link action
+- do not add a broad MCP surface to the realtime path
 
 Deep-work path:
 - GitHub MCP may be useful if the agent needs broad repository/issue/PR exploration
@@ -251,13 +271,14 @@ Do not spend core implementation time wiring a giant MCP surface.
 
 FALLBACK ORDER IF TIME IS SHORT
 Cut first:
-1. Agents API deep-work feature
-2. GitHub MCP
-3. create_github_issue
-4. multiple contacts
-5. fancy Slack formatting
-6. sophisticated approval behavior
-7. decorative UI
+1. Airwallex sandbox extension
+2. Agents API deep-work feature
+3. GitHub MCP
+4. create_github_issue
+5. multiple contacts
+6. fancy Slack formatting
+7. sophisticated approval behavior
+8. decorative UI
 
 Never cut:
 - realtime conversation

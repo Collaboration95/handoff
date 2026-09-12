@@ -18,6 +18,7 @@ Spend custom development time on:
 - human-safe approval
 - visible action provenance
 - one optional deep-work delegation
+- one optional sandbox payment-link action through Airwallex Developer MCP
 
 ARCHITECTURE PRINCIPLE
 Use a TWO-SPEED agent architecture.
@@ -143,6 +144,23 @@ Slack:
 
 Do NOT expose a giant generic GitHub/Slack surface to the realtime model.
 
+5A. OPTIONAL AIRWALLEX DEVELOPER MCP EXTENSION — STRETCH
+Add this only after the core demo is stable and sandbox access is already available.
+
+Expose one narrow action:
+
+create_airwallex_payment_link(invoice_or_amount)
+
+Flow:
+GPT-Live-1
+-> contextual invoice/amount resolution
+-> Airwallex Developer MCP
+-> sandbox payment link
+-> optional Slack delivery
+-> spoken confirmation + Agent Activity event
+
+Keep the integration intentionally tiny. Do not implement production AgentOS, payments infrastructure, cards, payouts, beneficiaries, or additional Airwallex workflows. Treat payment-link creation as a consequential write and use the existing conversational approval model where appropriate.
+
 6. DEEP-WORK AGENT — STRETCH
 Add only after the core demo is stable.
 
@@ -191,6 +209,10 @@ Do not adopt MCP merely because it exists.
 
 Realtime critical path:
 - prefer direct narrow GitHub/Slack wrappers
+
+Optional sponsor extension:
+- use the Airwallex Developer MCP only for one sandbox payment-link action
+- do not add a broad finance tool surface to the realtime path
 
 Deep-work path:
 - GitHub MCP is reasonable if broad repository/issue/PR access makes the agent implementation easier
@@ -252,6 +274,8 @@ Usually execute immediately for the demo.
 
 CONSEQUENTIAL WRITE
 Set pending_action and ask for a quick spoken confirmation.
+
+For the optional Airwallex extension, creating a sandbox payment link is still treated as a consequential write even though it is not a production charge.
 
 Example:
 
@@ -423,6 +447,9 @@ LiveKit data events
     ->
 Agent Activity panel
 
+Optional sponsor path:
+    GPT-Live-1 -> Airwallex Developer MCP sandbox -> payment link -> optional Slack delivery
+
 18. RECOMMENDED REPOSITORY SHAPE
 
 handoff/
@@ -472,6 +499,15 @@ Actions:
 - request GitHub review
 - send Slack DM
 
+OPTIONAL FINANCE EXTENSION
+Example:
+"Create a payment link for that invoice."
+
+Actions:
+- resolve the invoice and amount from meeting context
+- create one sandbox payment link through Airwallex Developer MCP
+- optionally send the link through Slack
+
 REALTIME CORRECTION
 Example:
 "Actually, not Alex — Sarah."
@@ -513,6 +549,7 @@ Example:
 - generic multi-agent hierarchy
 - sophisticated identity
 - giant MCP tool surface
+- production payments infrastructure, cards, payouts, beneficiaries, or additional Airwallex workflows
 - custom autonomous coding harness if Agents API already provides the required primitive
 
 FINAL IMPLEMENTATION DIRECTIVE
@@ -526,7 +563,8 @@ Keep important context in a tiny in-memory object.
 Use conversational pending-action approval.
 Publish action events to the meeting UI.
 Do not implement recording.
-Only after this is stable, add ONE Agents API deep-work flow.
+Only after this is stable, add at most ONE optional stretch flow: the Airwallex sandbox payment-link demo or the Agents API deep-work flow.
+If the Airwallex extension is selected, keep it to one MCP action and optional Slack delivery.
 
 Handoff's value must come from:
 

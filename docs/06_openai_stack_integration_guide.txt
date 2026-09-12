@@ -182,6 +182,28 @@ Do not implement:
 - full bot conversations
 - multiple workspaces
 
+8A. AIRWALLEX DEVELOPER MCP
+ROLE
+Optional sponsor-provided sandbox integration for one narrowly scoped finance action.
+
+USE FOR
+- creating one sandbox payment link from an invoice and amount resolved in meeting context
+
+FLOW
+GPT-Live-1
+-> contextual invoice/amount resolution
+-> Airwallex Developer MCP
+-> sandbox payment link
+-> optional Slack delivery
+-> spoken confirmation + Agent Activity event
+
+CONSTRAINTS
+- use the Airwallex Developer MCP against its sandbox only
+- keep the boundary to create_airwallex_payment_link(invoice_or_amount)
+- treat payment-link creation as a consequential write and use conversational approval where appropriate
+- do not implement production AgentOS, payments infrastructure, cards, payouts, beneficiaries, or additional Airwallex workflows
+- cut this extension immediately if MCP or sandbox access is not already reliable
+
 9. MEETING STATE
 ROLE
 Tiny deterministic contextual anchor.
@@ -192,6 +214,8 @@ meeting_state = {
     "current_github_item": "#12",
     "current_pr": "#18",
     "current_person": "Guru",
+    "current_invoice": None,
+    "current_invoice_amount": None,
     "pending_action": None
 }
 
@@ -278,6 +302,9 @@ GPT-6 Astra
 OPTIONAL BROAD REPO ACCESS
 GitHub MCP
 
+OPTIONAL SANDBOX FINANCE ACTION
+Airwallex Developer MCP -> payment link
+
 VISIBLE TRACE
 LiveKit data messages -> ActivityPanel
 
@@ -305,6 +332,13 @@ Reason:
 simple Slack side effect
 
 Request:
+"Create a payment link for that invoice."
+Path:
+OPTIONAL MCP FAST EXTENSION
+Reason:
+one sandbox side effect after contextual invoice/amount resolution
+
+Request:
 "Actually not Sarah, assign it to me."
 Path:
 FAST + pending_action correction
@@ -329,6 +363,9 @@ long-running coding/tool task
 If Agents API or Astra access causes implementation friction:
 CUT IT.
 
+If Airwallex Developer MCP or sandbox access causes implementation friction:
+CUT THE OPTIONAL EXTENSION.
+
 The core project remains strong with:
 LiveKit
 + GPT-Live-1
@@ -342,3 +379,6 @@ The deep path is a bonus, not the product foundation.
 
 15. ONE-SENTENCE ARCHITECTURE PITCH
 "GPT-Live-1 stays in the meeting with you, immediate actions use a fast deterministic tool path, and Handoff only spins up a full OpenAI agent when the work actually requires autonomy."
+
+OPTIONAL SPONSOR EXTENSION
+"When the meeting mentions an invoice, Handoff can resolve it from context and create a sandbox payment link through the Airwallex Developer MCP without turning the MVP into a payments platform."

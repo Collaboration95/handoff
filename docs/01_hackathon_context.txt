@@ -30,6 +30,7 @@ Handoff is a realtime meeting participant that:
 5. Gives spoken confirmation.
 6. Shows a visible action trace in the meeting UI.
 7. Can ask for lightweight confirmation before consequential actions.
+8. Can optionally extend into one narrowly scoped finance workflow through the Airwallex Developer MCP sandbox.
 
 LATEST IMPLEMENTATION STRATEGY
 Prefer OpenAI technologies where they solve a real problem, because OpenAI is a hackathon partner, but do NOT force OpenAI components into places where simpler infrastructure already solves the problem better.
@@ -43,6 +44,7 @@ Use:
 - Optional OpenAI Agents API for long-running/deep work only.
 - Optional GPT-6 Astra for deep autonomous coding/repository tasks if API access is available.
 - Optional GitHub MCP in the deep-work path where broad repository access is useful.
+- Optional Airwallex Developer MCP in the sandbox for one payment-link action only.
 
 DO NOT REBUILD SOLVED INFRASTRUCTURE
 Do NOT spend hackathon time implementing:
@@ -57,12 +59,13 @@ Do NOT spend hackathon time implementing:
 - vector databases
 - long-term memory
 - production OAuth
+- production payments infrastructure, cards, payouts, beneficiaries, or broad finance workflows
 - contact-management systems
 - broad multi-agent hierarchies
 - multiple collaboration surfaces
 
 TWO-SPEED AGENT PRINCIPLE
-Handoff should have two execution paths:
+Handoff should have two execution paths, plus one optional sponsor extension:
 
 FAST PATH
 For actions where the desired operation is already clear:
@@ -87,6 +90,17 @@ meeting -> GPT-Live-1 -> delegate task -> Agents API / coding harness -> result 
 
 Do NOT put the Agents API in the realtime critical path for simple actions.
 
+OPTIONAL AIRWALLEX DEMO EXTENSION (STRETCH)
+If the Airwallex Developer MCP and sandbox access are already available, Handoff may demonstrate one basic finance action:
+
+User:
+"Handoff, create a payment link for that invoice."
+
+Flow:
+meeting -> GPT-Live-1 -> Handoff -> Airwallex Developer MCP -> sandbox payment link -> optional Slack delivery -> spoken confirmation
+
+Keep this intentionally tiny. Resolve the invoice and amount from meeting context, create only a sandbox payment link, and optionally send the link through Slack. Do not implement production AgentOS, payments infrastructure, cards, payouts, beneficiaries, or additional Airwallex workflows.
+
 CORE STRATEGIC LINE
 "One surface -> contextual understanding -> real side effect -> human-safe action -> visible confirmation."
 
@@ -100,6 +114,11 @@ The judges should visibly understand this sequence in seconds:
 6. Handoff performs the side effect.
 7. Handoff speaks the result.
 8. The activity panel proves what happened.
+
+An optional sponsor extension may additionally show:
+9. Handoff resolves an invoice reference.
+10. Handoff creates a sandbox payment link through Airwallex Developer MCP.
+11. Handoff optionally shares the link through Slack and confirms it verbally.
 
 PERSONAL CONSTRAINTS
 - Solo builder.

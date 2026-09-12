@@ -5,7 +5,7 @@ ONE-LINE IDEA
 Meetings should not end with a list of action items. They should end with the actions already done.
 
 PRODUCT
-Handoff is a realtime voice agent that joins a live meeting as a participant, understands the ongoing conversation, resolves contextual references, and performs actions across tools like GitHub and Slack when explicitly invoked.
+Handoff is a realtime voice agent that joins a live meeting as a participant, understands the ongoing conversation, resolves contextual references, and performs actions across tools like GitHub and Slack when explicitly invoked. As an optional sponsor extension, it can create one sandbox payment link through the Airwallex Developer MCP.
 
 Handoff is NOT a meeting-transcription product.
 
@@ -54,6 +54,17 @@ GitHub / Slack narrow tools
     ->
 spoken confirmation + Agent Activity feed
 
+OPTIONAL AIRWALLEX SANDBOX EXTENSION
+GPT-Live-1
+    ->
+contextual invoice/amount resolution
+    ->
+Airwallex Developer MCP
+    ->
+sandbox payment link
+    ->
+optional Slack delivery + spoken confirmation
+
 OPTIONAL DEEP-WORK PATH
 GPT-Live-1
     ->
@@ -82,11 +93,28 @@ Optional:
 
 Do not expose dozens of GitHub or Slack operations to the realtime model.
 
+OPTIONAL AIRWALLEX DEMO TOOL — STRETCH
+Only if the core demo is stable and the Airwallex Developer MCP sandbox is available:
+
+6. create_airwallex_payment_link(invoice_or_amount)
+
+Demo action:
+"Handoff, create a payment link for that invoice."
+
+Handoff should:
+- resolve the invoice and amount from meeting context
+- call the Airwallex Developer MCP against its sandbox
+- receive the generated payment link
+- optionally send the link through Slack
+- verbally confirm completion and publish the action trace
+
+Do not implement production AgentOS, payments infrastructure, cards, payouts, beneficiaries, or additional Airwallex workflows.
+
 DEEP-WORK TOOLS — STRETCH
 Only if the core demo is already stable:
 
-5/6. start_repo_task(repo, objective, github_context)
-6/7. get_repo_task_status(task_id)
+7. start_repo_task(repo, objective, github_context)
+8. get_repo_task_status(task_id)
 
 Example use:
 "Handoff, investigate why that auth issue is happening."
@@ -141,6 +169,7 @@ Behavior:
 CONSEQUENTIAL WRITES
 Examples:
 - assignment changes
+- creating a sandbox payment link
 - creating PRs
 - merges
 - deployments
@@ -244,6 +273,33 @@ Later:
 Handoff:
 "I finished investigating issue 12. The likely cause is in the token refresh timeout path. I have the findings ready."
 
+SCENE 6 — OPTIONAL AIRWALLEX PAYMENT-LINK WORKFLOW
+Only include this sponsor extension if the core demo is stable and sandbox access is ready.
+
+Meeting context:
+The group discusses an invoice and its amount.
+
+User:
+"Handoff, create a payment link for that invoice."
+
+Handoff:
+- resolves "that invoice" and the amount from recent meeting context
+- calls the Airwallex Developer MCP against the sandbox
+- receives a sandbox payment link
+- optionally sends the link to the user through Slack
+- verbally confirms what it did
+
+Activity:
+CONTEXT
+"that invoice" -> invoice + amount
+
+ACTION
+Create Airwallex sandbox payment link
+
+RESULT
+✓ Payment link created
+✓ Slack delivery completed (optional)
+
 WHY THE DEMO WORKS
 It visibly demonstrates:
 - realtime voice
@@ -257,9 +313,13 @@ It visibly demonstrates:
 - lightweight approval
 - visible action trace
 - optional long-running agent delegation
+- optional extension from developer tooling into a sandbox finance workflow
 
 IMPORTANT PITCH LINE
 "Most meeting assistants create notes. Handoff turns decisions into actions while the meeting is still happening."
 
 OPTIONAL TECHNICAL PITCH LINE
 "Handoff uses GPT-Live-1 for the live conversation, fast OpenAI reasoning for immediate tool actions, and only delegates to a full agent harness when the work genuinely requires autonomy."
+
+OPTIONAL SPONSOR EXTENSION PITCH
+"When the meeting mentions an invoice, Handoff can resolve it from context and create a sandbox payment link through the Airwallex Developer MCP, without turning the MVP into a payments platform."
