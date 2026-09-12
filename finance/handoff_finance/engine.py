@@ -5,6 +5,7 @@ from typing import Protocol
 
 from .models import Decision, GateResult, InvoiceDraft, InvoiceRequest
 from .rules import validate_invoice
+from .telemetry import trace_scope
 
 
 class Planner(Protocol):
@@ -20,7 +21,7 @@ def _usage(planner: Planner) -> dict:
     return dict(usage) if isinstance(usage, dict) else {}
 
 
-async def improve(request: InvoiceRequest, planner: Planner) -> Decision:
+async def _improve(request: InvoiceRequest, planner: Planner) -> Decision:
     started = monotonic()
 
     if request.proposed is not None:
@@ -43,7 +44,9 @@ async def improve(request: InvoiceRequest, planner: Planner) -> Decision:
                 error="initial provider failed",
             )
 
-    baseline_checks = validate_invoice(request, baseline)
+    with trace_scope("validate-baseline", baseline, metadata={"request_id": request.request_id}) as span:
+        baseline_checks = validate_invoice(request, baseline)
+        span.set_output(baseline_checks)
     if baseline_checks.valid:
         return Decision(
             request_id=request.request_id,
@@ -52,6 +55,27 @@ async def improve(request: InvoiceRequest, planner: Planner) -> Decision:
             baseline=baseline,
             baseline_checks=baseline_checks,
             selected=baseline,
+            candidates=[],
+            candidate_checks=[],
+            elapsed_ms=int((monotonic() - started) * 1000),
+            usage=_usage(planner),
+            error=None,
+        )
+
+    if baseline_checks.review_reasons:
+        with trace_scope(
+            "stop-on-source-blocker",
+            {"review_reasons": baseline_checks.review_reasons},
+            metadata={"request_id": request.request_id},
+        ) as span:
+            span.set_output({"status": "needs_review", "repair_attempted": False})
+        return Decision(
+            request_id=request.request_id,
+            objective=request.objective,
+            status="needs_review",
+            baseline=baseline,
+            baseline_checks=baseline_checks,
+            selected=None,
             candidates=[],
             candidate_checks=[],
             elapsed_ms=int((monotonic() - started) * 1000),
@@ -76,11 +100,23 @@ async def improve(request: InvoiceRequest, planner: Planner) -> Decision:
             error="repair provider failed",
         )
 
-    candidate_checks = [validate_invoice(request, candidate) for candidate in candidates]
-    selected = next(
-        (candidate for candidate, checks in zip(candidates, candidate_checks) if checks.valid),
-        None,
-    )
+    with trace_scope(
+        "validate-candidates",
+        [candidate.model_dump(mode="json") for candidate in candidates],
+        metadata={"request_id": request.request_id, "candidate_count": len(candidates)},
+    ) as span:
+        candidate_checks = [validate_invoice(request, candidate) for candidate in candidates]
+        span.set_output([checks.model_dump(mode="json") for checks in candidate_checks])
+    with trace_scope(
+        "select-candidate",
+        {"candidate_count": len(candidates)},
+        metadata={"request_id": request.request_id},
+    ) as span:
+        selected = next(
+            (candidate for candidate, checks in zip(candidates, candidate_checks) if checks.valid),
+            None,
+        )
+        span.set_output({"selected": selected.model_dump(mode="json") if selected else None})
     return Decision(
         request_id=request.request_id,
         objective=request.objective,
@@ -94,3 +130,22 @@ async def improve(request: InvoiceRequest, planner: Planner) -> Decision:
         usage=_usage(planner),
         error=None,
     )
+
+
+async def improve(request: InvoiceRequest, planner: Planner) -> Decision:
+    with trace_scope(
+        "improve-invoice-plan",
+        request,
+        metadata={"request_id": request.request_id},
+        version="source-backed-invoice-v1",
+    ) as trace:
+        decision = await _improve(request, planner)
+        trace.set_output(
+            {
+                "request_id": decision.request_id,
+                "status": decision.status,
+                "selected": decision.selected,
+                "checks": decision.baseline_checks,
+            }
+        )
+    return decision.model_copy(update={"trace_id": trace.trace_id, "trace_url": trace.trace_url})
