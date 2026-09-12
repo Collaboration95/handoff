@@ -1,6 +1,6 @@
 # Two-minute finance demo
 
-Use three humans in the same hosted LiveKit room, with headphones, and one
+Use two humans in the same hosted LiveKit room, with headphones, and one
 Handoff GPT-Live-1 agent. The existing LiveKit clients handle the call. Share
 the companion invoice page from the operator's laptop.
 
@@ -29,7 +29,7 @@ the companion invoice page from the operator's laptop.
 
 | Time | Speaker / action |
 | --- | --- |
-| 0:00–0:20 | Person 1: “Can we close out the September implementation work?” Person 2: “Eight units were accepted. Two were already invoiced.” Person 3: “The signed amendment changed the rate to ninety dollars. We still need the invoice.” |
+| 0:00–0:20 | Person 1: “Can we close out the September implementation work? Eight units were accepted, and two were already invoiced.” Person 2: “The signed amendment changed the rate to ninety dollars. Handoff, please propose the invoice for the remaining accepted work.” |
 | 0:20–0:35 | Handoff proposes the invoice objective in voice and the activity page. The operator approves the invoice workflow, authorizing a sandbox draft after checks pass. |
 | 0:35–0:55 | Show the original and selected invoice. “This controlled stale draft would bill ten units at the old rate. The evidence supports six at SGD90: SGD540 before the supplied tax.” Expand the failed checks and repaired candidate. |
 | 0:55–1:15 | Handoff calls the approved draft-creation tool (or the operator uses **Create sandbox draft** as a fallback). Show actual activity and invoice ID. Wait for readback verification before describing success. |

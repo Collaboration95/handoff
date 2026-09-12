@@ -28,7 +28,7 @@ when it improves clarity, trust, and demo comprehension for Handoff.
 
 ### Current finance demo: two-hour build
 
-Three people join the hosted LiveKit room through existing open-source clients.
+Two people join the hosted LiveKit room through existing open-source clients.
 Handoff's web page is the companion activity and approval view. Reuse the visual
 system below in one static HTML/CSS/JS page; avoid a new framework, participant
 grid, call controls, or custom conferencing implementation for this demo.
