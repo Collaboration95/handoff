@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable, Mapping, Sequence
 
 from .models import InvoiceDraft, InvoiceRequest
 from .rules import validate_invoice
+from .telemetry import sanitize_trace_data, trace_scope
 
 
 SANDBOX_URL = "https://api.sandbox.airwallex.com"
@@ -158,22 +159,47 @@ class AirwallexClient:
     async def _call(
         self, *parts: str, payload: Mapping[str, Any] | None = None, write: bool = False
     ) -> Any:
+        operation = parts
         if payload is not None:
             parts = (*parts, "--data-stdin")
         argv = self._argv(*parts, write=write)
         stdin = json.dumps(payload, separators=(",", ":"), ensure_ascii=False) if payload else None
-        result = await self.runner(argv, stdin, self.timeout)
-        if result.returncode != 0:
-            raise AirwallexError(_classify_error(f"{result.stderr}\n{result.stdout}"))
-        try:
-            decoded = json.loads(result.stdout)
-        except (TypeError, json.JSONDecodeError) as exc:
-            raise AirwallexError("invalid_cli_response", uncertain=True) from exc
-        if not isinstance(decoded, dict):
-            raise AirwallexError("invalid_cli_response", uncertain=True)
-        if decoded.get("ok") is False:
-            raise AirwallexError(_classify_error(json.dumps(decoded.get("error", {}))))
-        return decoded.get("data", decoded)
+
+        async def invoke() -> Any:
+            result = await self.runner(argv, stdin, self.timeout)
+            if result.returncode != 0:
+                raise AirwallexError(_classify_error(f"{result.stderr}\n{result.stdout}"))
+            try:
+                decoded = json.loads(result.stdout)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise AirwallexError("invalid_cli_response", uncertain=True) from exc
+            if not isinstance(decoded, dict):
+                raise AirwallexError("invalid_cli_response", uncertain=True)
+            if decoded.get("ok") is False:
+                raise AirwallexError(_classify_error(json.dumps(decoded.get("error", {}))))
+            return decoded.get("data", decoded)
+
+        trace_name = None
+        if operation == ("invoices", "create"):
+            trace_name = "airwallex-invoice-create"
+        elif len(operation) == 3 and operation[:2] == ("invoices", "get"):
+            trace_name = "airwallex-invoice-get"
+        elif len(operation) == 4 and operation[:3] == ("invoices", "line-items", "add"):
+            trace_name = "airwallex-line-items-add"
+        elif len(operation) == 4 and operation[:3] == ("invoices", "line-items", "list"):
+            trace_name = "airwallex-line-items-list"
+
+        if trace_name is None:
+            return await invoke()
+
+        trace_input = {
+            "operation": list(operation),
+            "payload": sanitize_trace_data(payload) if payload is not None else None,
+        }
+        with trace_scope(trace_name, trace_input, as_type="tool") as span:
+            decoded = await invoke()
+            span.set_output(sanitize_trace_data(decoded))
+            return decoded
 
     async def readiness(self) -> dict[str, Any]:
         try:

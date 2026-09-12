@@ -442,14 +442,14 @@ def create_app(
                 else:
                     with trace as parent:
                         with trace_scope(
-                            "create-airwallex-draft", {"proposal_id": body.proposal_id}
+                            "run-airwallex-invoice-workflow", {"proposal_id": body.proposal_id}
                         ) as create_span:
                             result = await state.airwallex.create_verified_invoice(
                                 state.requests[body.proposal_id], selected
                             )
                             create_span.set_output(result)
                         with trace_scope(
-                            "readback-airwallex-draft", {"proposal_id": body.proposal_id}
+                            "summarize-airwallex-readback", {"proposal_id": body.proposal_id}
                         ) as readback_span:
                             readback_span.set_output(
                                 {

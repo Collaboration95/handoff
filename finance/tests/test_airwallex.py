@@ -6,6 +6,7 @@ from collections import deque
 
 import pytest
 
+import handoff_finance.airwallex as airwallex_module
 from handoff_finance.airwallex import AirwallexClient, AirwallexError, CommandResult
 from handoff_finance.fixtures import build_case
 
@@ -427,3 +428,92 @@ def test_cli_errors_are_classified_without_echoing_sensitive_stderr(tmp_path) ->
         result = asyncio.run(client.create_verified_invoice(request, draft))
         assert result["error"] == expected
         assert "secret" not in json.dumps(result)
+
+
+def test_invoice_cli_calls_trace_actual_runner_and_decoded_safe_data(monkeypatch, tmp_path) -> None:
+    """Catches post-hoc spans, auth tracing, and secrets or signed queries in trace data."""
+    events = []
+    active_span = None
+
+    class Scope:
+        def __init__(self, name, input, **kwargs):
+            self.name = name
+            self.input = input
+            self.kwargs = kwargs
+
+        def __enter__(self):
+            nonlocal active_span
+            assert active_span is None
+            active_span = self.name
+            events.append(("start", self.name, self.input, self.kwargs))
+            return self
+
+        def set_output(self, output):
+            events.append(("output", self.name, output))
+
+        def __exit__(self, *args):
+            nonlocal active_span
+            events.append(("end", self.name))
+            active_span = None
+
+    def fake_trace_scope(name, input, **kwargs):
+        return Scope(name, input, **kwargs)
+
+    responses = deque(
+        [
+            authenticated(),
+            ok({"id": "inv_demo_123", "access_token": "response-secret"}),
+            ok({"items": [{"id": "line_demo_123"}]}),
+            ok(
+                {
+                    "id": "inv_demo_123",
+                    "hosted_invoice_url": (
+                        "https://example.test/invoice?X-Amz-Signature=response-secret"
+                    ),
+                }
+            ),
+            ok({"items": [{"id": "line_demo_123"}]}),
+        ]
+    )
+
+    async def runner(argv, stdin, timeout):
+        if argv[1:3] == ("auth", "whoami"):
+            assert active_span is None
+        else:
+            assert active_span is not None
+        return responses.popleft()
+
+    monkeypatch.setattr(airwallex_module, "trace_scope", fake_trace_scope)
+    client = AirwallexClient(runner=runner, cli_path=CLI, journal_path=tmp_path / "journal.json")
+
+    async def exercise_calls():
+        await client._call("auth", "whoami")
+        await client._call(
+            "invoices", "create", payload={"request_id": "req-1", "api_key": "input-secret"}, write=True
+        )
+        await client._call(
+            "invoices",
+            "line-items",
+            "add",
+            "inv_demo_123",
+            payload={"request_id": "req-1", "line_items": []},
+            write=True,
+        )
+        await client._call("invoices", "get", "inv_demo_123")
+        await client._call("invoices", "line-items", "list", "inv_demo_123")
+
+    asyncio.run(exercise_calls())
+
+    starts = [event for event in events if event[0] == "start"]
+    outputs = [event for event in events if event[0] == "output"]
+    assert [event[1] for event in starts] == [
+        "airwallex-invoice-create",
+        "airwallex-line-items-add",
+        "airwallex-invoice-get",
+        "airwallex-line-items-list",
+    ]
+    assert all(event[3]["as_type"] == "tool" for event in starts)
+    assert starts[0][2]["payload"]["api_key"] == "[REDACTED]"
+    assert outputs[0][2]["access_token"] == "[REDACTED]"
+    assert outputs[2][2]["hosted_invoice_url"] == "https://example.test/invoice?[REDACTED]"
+    assert len([event for event in events if event[0] == "end"]) == 4
