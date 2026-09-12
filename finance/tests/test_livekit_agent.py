@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import pytest
 from livekit import rtc
@@ -13,6 +14,8 @@ from handoff_finance.livekit_agent import (
     InvoiceAssistant,
     ProposalAnnouncer,
     RuntimeConfig,
+    _close_voice_session,
+    _bind_session_health,
     validate_finance_api_url,
 )
 
@@ -211,6 +214,65 @@ def test_runtime_mute_closes_removed_stream_without_waiting_for_shutdown() -> No
     asyncio.run(exercise())
 
 
+def test_camera_lifecycle_does_not_remove_active_microphone() -> None:
+    """Catches camera mute/unpublish events accidentally tearing down the human mic."""
+    microphone = FakePublication("human-mic")
+    camera = FakePublication(
+        "human-camera",
+        kind=rtc.TrackKind.KIND_VIDEO,
+        source=rtc.TrackSource.SOURCE_CAMERA,
+    )
+    participant = FakeParticipant(
+        "finance", publication=microphone, extra_publications=[camera]
+    )
+    mixer = FakeMixer()
+    room = FakeRoom([participant])
+    bridge = HumanAudioMixer(room, mixer=mixer, stream_factory=FakeStream)
+    bridge.start()
+
+    room.emit("track_muted", participant, camera)
+    room.emit("track_unpublished", camera, participant)
+    room.emit("track_unsubscribed", object(), camera, participant)
+
+    assert bridge.human_microphones == 1
+    assert mixer.removed == []
+
+
+def test_voice_shutdown_closes_session_then_model_owned_http_client() -> None:
+    """Catches the GPT-Live model-owned aiohttp session leaking at bridge shutdown."""
+    events = []
+
+    class Resource:
+        def __init__(self, name):
+            self.name = name
+
+        async def aclose(self):
+            events.append(self.name)
+
+    asyncio.run(_close_voice_session(Resource("session"), Resource("model")))
+
+    assert events == ["session", "model"]
+
+
+def test_fatal_gpt_live_error_marks_heartbeat_unhealthy_and_stops_bridge() -> None:
+    """Catches a dead GPT-Live session leaving the room heartbeat falsely green."""
+    session = FakeRoom([])
+    updates = []
+    reporter = SimpleNamespace(update=lambda **changes: updates.append(changes))
+    stop = asyncio.Event()
+    unbind = _bind_session_health(session, reporter, stop)
+
+    session.emit(
+        "error", SimpleNamespace(error=SimpleNamespace(recoverable=False))
+    )
+
+    assert updates == [{"connected": False, "error": "gpt-live session error"}]
+    assert stop.is_set()
+    unbind()
+    assert session.callbacks["error"] == []
+    assert session.callbacks["close"] == []
+
+
 class FakeTransport:
     def __init__(self, responses):
         self.responses = list(responses)
@@ -274,6 +336,32 @@ def test_finance_api_uses_only_locked_non_approval_routes() -> None:
     }
 
 
+def test_operator_fault_mode_applies_to_voice_proposal_without_model_argument() -> None:
+    """Catches the voice proposal losing the staged fault mode or exposing it to the model."""
+    transport = FakeTransport([proposal()])
+    api = FinanceAPI(
+        "http://127.0.0.1:8000", transport=transport, fault_injection=True
+    )
+
+    asyncio.run(api.propose_invoice("Exercise the stale draft repair", "showcase"))
+
+    assert transport.calls == [
+        (
+            "POST",
+            "/v1/proposals",
+            {
+                "objective": "Exercise the stale draft repair",
+                "case_name": "showcase",
+                "fault_injection": True,
+            },
+        )
+    ]
+    propose_tool = next(
+        tool for tool in InvoiceAssistant(api).tools if tool.info.name == "propose_invoice"
+    )
+    assert "fault_injection" not in str(propose_tool.info)
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -333,7 +421,9 @@ def test_direct_room_config_needs_token_but_not_server_api_secret(monkeypatch) -
     monkeypatch.setenv("LIVEKIT_URL", "wss://livekit.handoff-demo.test")
     monkeypatch.setenv("LIVEKIT_TOKEN", "room-token")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-token")
+    monkeypatch.setenv("FINANCE_FAULT_INJECTION", "true")
 
     config = RuntimeConfig.from_env()
 
     assert config.livekit_token == "room-token"
+    assert config.fault_injection is True

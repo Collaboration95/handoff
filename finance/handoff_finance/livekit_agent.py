@@ -65,10 +65,12 @@ class FinanceAPI:
         *,
         transport: Transport | None = None,
         timeout_seconds: float = 3.0,
+        fault_injection: bool = False,
     ) -> None:
         self.base_url = validate_finance_api_url(base_url)
         self._transport = transport
         self._timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        self._fault_injection = fault_injection
         self._session: aiohttp.ClientSession | None = None
 
     async def _request(
@@ -100,7 +102,11 @@ class FinanceAPI:
         return await self._request(
             "POST",
             "/v1/proposals",
-            {"objective": objective, "case_name": case_name, "fault_injection": False},
+            {
+                "objective": objective,
+                "case_name": case_name,
+                "fault_injection": self._fault_injection,
+            },
         )
 
     async def get_invoice_status(self, proposal_id: str) -> dict[str, Any]:
@@ -264,6 +270,10 @@ class HumanAudioMixer:
             task.add_done_callback(self._finish_close_task)
         self._notify_count()
 
+    def _detach_if_microphone(self, participant: Any, publication: Any) -> None:
+        if self._is_microphone(participant, publication):
+            self._detach(participant)
+
     def _finish_close_task(self, task: asyncio.Task[None]) -> None:
         self._close_tasks.discard(task)
         with contextlib.suppress(Exception, asyncio.CancelledError):
@@ -279,14 +289,20 @@ class HumanAudioMixer:
             "track_published": lambda publication, participant: self._subscribe_participant(
                 participant
             ),
-            "track_unpublished": lambda publication, participant: self._detach(participant),
+            "track_unpublished": lambda publication, participant: self._detach_if_microphone(
+                participant, publication
+            ),
             "track_subscribed": lambda track, publication, participant: self._attach(
                 participant, publication
             ),
-            "track_unsubscribed": lambda track, publication, participant: self._detach(
-                participant
+            "track_unsubscribed": (
+                lambda track, publication, participant: self._detach_if_microphone(
+                    participant, publication
+                )
             ),
-            "track_muted": lambda participant, publication: self._detach(participant),
+            "track_muted": lambda participant, publication: self._detach_if_microphone(
+                participant, publication
+            ),
             "track_unmuted": lambda participant, publication: self._attach(
                 participant, publication
             ),
@@ -521,6 +537,7 @@ class RuntimeConfig:
     room_name: str = DEFAULT_ROOM_NAME
     model: str = DEFAULT_MODEL
     delegate_model: str = "gpt-5.6-luna"
+    fault_injection: bool = False
 
     @classmethod
     def from_env(cls) -> RuntimeConfig:
@@ -531,6 +548,9 @@ class RuntimeConfig:
         livekit_url = os.environ["LIVEKIT_URL"]
         if urlparse(livekit_url).scheme not in {"ws", "wss"}:
             raise ValueError("LIVEKIT_URL must use ws:// or wss://")
+        raw_fault_mode = os.getenv("FINANCE_FAULT_INJECTION", "false").strip().lower()
+        if raw_fault_mode not in {"true", "false"}:
+            raise ValueError("FINANCE_FAULT_INJECTION must be true or false")
         return cls(
             livekit_url=livekit_url,
             livekit_token=os.environ["LIVEKIT_TOKEN"],
@@ -543,27 +563,67 @@ class RuntimeConfig:
             ),
             model=os.getenv("GPT_LIVE_MODEL", DEFAULT_MODEL),
             delegate_model=os.getenv("GPT_LIVE_DELEGATE_MODEL", "gpt-5.6-luna"),
+            fault_injection=raw_fault_mode == "true",
         )
 
 
+async def _close_voice_session(session: Any | None, model: Any | None) -> None:
+    try:
+        if session is not None:
+            await session.aclose()
+    finally:
+        if model is not None:
+            await model.aclose()
+
+
+def _bind_session_health(
+    session: Any, reporter: VoiceStatusReporter, stop_requested: asyncio.Event
+) -> Callable[[], None]:
+    def fail(error: str) -> None:
+        reporter.update(connected=False, error=error)
+        stop_requested.set()
+
+    def on_error(event: Any) -> None:
+        if getattr(event.error, "recoverable", False):
+            return
+        fail("gpt-live session error")
+
+    def on_close(event: Any) -> None:
+        if not stop_requested.is_set():
+            fail("gpt-live session closed")
+
+    session.on("error", on_error)
+    session.on("close", on_close)
+
+    def unbind() -> None:
+        session.off("error", on_error)
+        session.off("close", on_close)
+
+    return unbind
+
+
 async def run_direct_room(config: RuntimeConfig) -> None:
-    api = FinanceAPI(config.finance_api_url)
+    api = FinanceAPI(
+        config.finance_api_url, fault_injection=config.fault_injection
+    )
     room = rtc.Room()
     reporter = VoiceStatusReporter(api, config.room_name, config.model)
     status_task = asyncio.create_task(reporter.run())
     mixer: HumanAudioMixer | None = None
     session: AgentSession | None = None
+    model: GPTLiveModel | None = None
     poller: ProposalPoller | None = None
     poll_task: asyncio.Task[None] | None = None
-    disconnected = asyncio.Event()
-    room.on("disconnected", lambda reason: disconnected.set())
+    stop_requested = asyncio.Event()
+    unbind_session_health: Callable[[], None] | None = None
+    room.on("disconnected", lambda reason: stop_requested.set())
     try:
         await room.connect(
             config.livekit_url,
             config.livekit_token,
             options=rtc.RoomOptions(auto_subscribe=False, connect_timeout=10.0),
         )
-        reporter.update(connected=True, room_name=room.name or config.room_name)
+        reporter.update(room_name=room.name or config.room_name)
         mixer = HumanAudioMixer(
             room, on_count_change=lambda count: reporter.update(human_microphones=count)
         )
@@ -579,6 +639,9 @@ async def run_direct_room(config: RuntimeConfig) -> None:
             api_key=config.openai_api_key,
         )
         session = AgentSession(llm=model, max_tool_steps=2)
+        unbind_session_health = _bind_session_health(
+            session, reporter, stop_requested
+        )
         session.input.audio = mixer.input
         assistant = InvoiceAssistant(api)
         poller = ProposalPoller(api, assistant)
@@ -595,20 +658,22 @@ async def run_direct_room(config: RuntimeConfig) -> None:
             ),
             record=False,
         )
-        await disconnected.wait()
+        reporter.update(connected=True, error=None)
+        await stop_requested.wait()
     except Exception:
         reporter.update(connected=False, error="voice bridge stopped")
         with contextlib.suppress(FinanceAPIError):
             await reporter.send()
         raise
     finally:
+        if unbind_session_health is not None:
+            unbind_session_health()
         if poller is not None:
             poller.stop()
         if poll_task is not None:
             with contextlib.suppress(asyncio.CancelledError):
                 await poll_task
-        if session is not None:
-            await session.aclose()
+        await _close_voice_session(session, model)
         if mixer is not None:
             await mixer.aclose()
         reporter.update(connected=False, human_microphones=0)

@@ -12,11 +12,29 @@ LIVEKIT_URL=wss://livekit.handoff-demo.test
 LIVEKIT_TOKEN=...
 LIVEKIT_ROOM=handoff-finance
 FINANCE_API_URL=http://127.0.0.1:8000
+FINANCE_FAULT_INJECTION=false
 ```
 
 The token service must issue the agent a unique identity and a token scoped to `handoff-finance` with room join, audio publish, audio subscribe, and data publish grants. The token determines the actual room; `LIVEKIT_ROOM` labels status and defaults to `handoff-finance`. `FINANCE_API_URL` is intentionally restricted to `localhost` or `127.0.0.1` over HTTP(S). Secrets are read only from the environment and are never logged or included in heartbeat payloads.
 
-The current deployment endpoints are intended to be `https://app.handoff-demo.test` for human clients and `wss://livekit.handoff-demo.test` for the bridge. Confirm that those names resolve to the operator-provided host from every laptop and use an ordinarily trusted TLS certificate. The previous `172.20.10.2` connection-sheet address identified this Mac and is not proof of the other laptop's address. Do not bypass certificate validation.
+`FINANCE_FAULT_INJECTION` is an operator-only `true`/`false` switch. Leave it `false` for the normal voice path. Set it to `true` before launch for the staged stale-draft repair demonstration, then restart the bridge. The model cannot set or override this value. The staged result is a simulated input error, not a real Airwallex failure.
+
+The active demo path uses LiveKit Cloud. Use the public `wss://…livekit.cloud` value stored as `LIVEKIT_URL`; no Tailscale, custom DNS, local certificate authority, or TLS bypass is needed. Never place a room token in documentation, chat, source control, or a shared URL.
+
+To refresh a six-hour token from the server credentials in `.env.local`, load the environment and write the token directly to a private temporary file. Change both values for each participant; use three distinct human identities plus `handoff-finance-agent`. Never reuse an identity while it is connected.
+
+```bash
+set -a
+source .env.local
+set +a
+umask 077
+export TOKEN_IDENTITY=finance-member-1
+TOKEN_FILE=/private/tmp/finance-member-1.token
+PYTHONPATH=finance .venv/bin/python -c 'import os,sys; from datetime import timedelta; from livekit import api; room=os.environ.get("FINANCE_ROOM_NAME") or os.environ.get("LIVEKIT_ROOM","handoff-finance"); token=(api.AccessToken().with_identity(os.environ["TOKEN_IDENTITY"]).with_ttl(timedelta(hours=6)).with_grants(api.VideoGrants(room_join=True,room=room,can_publish=True,can_subscribe=True,can_publish_data=True)).to_jwt()); sys.stdout.write(token)' > "$TOKEN_FILE"
+chmod 600 "$TOKEN_FILE"
+```
+
+Repeat with `finance-member-2`, `finance-member-3`, and `handoff-finance-agent`, using a separate file each time. The command prints nothing to the terminal. Delete the temporary token files after the rehearsal.
 
 Check the local configuration without making a network connection:
 
@@ -45,7 +63,7 @@ Then start the direct-room voice participant:
 PYTHONPATH=finance .venv/bin/python -m handoff_finance.livekit_agent --env-file .env.local
 ```
 
-Open the existing LiveKit Meet client on three separate laptops with three unique human identities in `handoff-finance`. Each person should publish one microphone and wear headphones to prevent echo and feedback. The activity page is the source of truth for proposal approval, creation state, and readback verification. The voice heartbeat posts the connected room, current remote human microphone count, model name, and a compact error state to `POST /v1/voice/status` on changes and every five seconds.
+On each of three laptops, open the stock LiveKit Meet custom tab at [meet.livekit.io/custom](https://meet.livekit.io/custom). Paste the same public Cloud WebSocket URL and that person's separate room-token file contents. All tokens must target `handoff-finance`, and all identities must be unique. Each person should publish one microphone and wear headphones to prevent echo and feedback. The activity page is the source of truth for proposal approval, creation state, and readback verification. The voice heartbeat posts the connected room, current remote human microphone count, model name, and a compact error state to `POST /v1/voice/status` on changes and every five seconds.
 
 The voice tools can only create a proposal, read its status, or ask the backend to create a previously approved invoice. They have no approve or cancel operation. Initial approval through **Approve invoice workflow** authorizes creation of a sandbox draft after server validation; the page's create button is a fallback, not a second approval. The backend rejects stale, unapproved, or unverified proposals and owns the invoice fields and idempotency journal.
 
@@ -63,4 +81,4 @@ The voice tools can only create a proposal, read its status, or ask the backend 
 
 The released SDK mixer produces one mono waveform without speaker identity. Overlapping speech can be harder to understand, and no statement in that mix can identify an approver. The authenticated activity-page action supplies approval. The bridge intentionally subscribes only to remote standard-participant microphone tracks and never mixes another agent or its own published output.
 
-This repository has not yet verified the operator's Tailscale hostname, hosted certificate, room token, or a live three-laptop rehearsal. GPT-Live access was checked separately; the bridge does not repeat that paid connectivity check during local tests.
+The supplied Cloud token was verified by joining `handoff-finance` as `handoff-finance-agent` with subscriptions disabled. A synthetic macOS speech clip was converted to signed 16-bit, 24 kHz mono PCM, sent as 20 ms frames to GPT-Live, and caused the Responses delegate to call a harmless in-memory tool. No human audio, proposal approval, or finance write was used in that probe. A live three-laptop rehearsal and the persistent participant-audio bridge still require the explicit runtime authorization described by the operator workflow.
