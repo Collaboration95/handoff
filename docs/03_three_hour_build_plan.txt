@@ -1,0 +1,159 @@
+3-HOUR MVP IMPLEMENTATION PLAN
+
+PRIMARY GOAL
+Ship one reliable end-to-end demo:
+voice -> meeting context -> GitHub action -> Slack action -> spoken confirmation
+
+DO NOT BUILD
+- Zoom integration
+- Google Meet integration
+- Microsoft Teams integration
+- Slack incoming event handling
+- Slack event subscriptions
+- slash commands
+- full Slack bot conversational surface
+- multiple Slack workspaces
+- production OAuth
+- speaker diarization
+- vector database
+- long-term memory
+- multi-agent architecture
+- calendar integration
+- Jira
+- Linear
+- multiple project management integrations
+- full contact management system
+- production auth
+- fancy database
+
+MEETING SURFACE
+Use a simple browser page.
+It represents the meeting.
+The microphone streams audio to OpenAI's realtime voice model.
+The meeting app should have a small "Agent Activity" panel so judges can see actions.
+
+SUGGESTED UI
+
+Relay                         LIVE
+
+[ microphone / waveform / listening state ]
+
+Agent Activity:
+- Retrieved GitHub #12
+- Assigned GitHub #12 -> Guru
+- Requested reviewer on PR #18
+- Slack DM sent
+- Posted to #engineering
+
+ARCHITECTURE
+
+Browser microphone
+        |
+        v
+OpenAI realtime voice model
+        |
+        v
+tool/function call layer
+        |
+        +--> GitHub API
+        |
+        +--> Slack API
+        |
+        v
+spoken confirmation + activity feed
+
+SLACK STRATEGY — MINIMUM PATH OF RESISTANCE
+Slack is an action destination, NOT the place where Relay receives commands.
+
+Do:
+- Create/use a free Slack workspace.
+- Create one custom Slack app/bot.
+- Let the backend use Slack's API to post messages.
+- Use one or two channels like #engineering and #product.
+- Send DMs to the current user if there are no other real users.
+
+Do NOT:
+- Implement Slack mentions/events.
+- Implement incoming commands from Slack.
+- Depend on Slack Premium.
+
+IF ONLY ONE SLACK ACCOUNT EXISTS
+This is fine.
+
+Use a simple contact mapping:
+people = {
+  "Guru": {
+    "github": "<github username>",
+    "slack": "<Slack user ID>"
+  }
+}
+
+For the demo, Relay can send a DM to the same user.
+If another hackathon participant joins the free workspace, optionally add them later.
+
+GITHUB STRATEGY
+Use a dedicated demo repository containing:
+- realistic issues
+- at least one open PR
+- predictable issue/PR numbers
+- user already eligible for assignment/review
+
+Recommended test fixtures:
+- Issue #12: authentication timeout bug
+- Issue #42: retry / HTTP 429 issue
+- PR #18: proposed fix for authentication issue
+
+TIMEBOX
+
+0:00-0:35
+- Browser microphone
+- Realtime voice connection
+- Agent can listen and speak
+
+0:35-1:10
+- GitHub get issue
+- GitHub assign issue
+
+1:10-1:35
+- GitHub request PR reviewer
+
+1:35-2:00
+- Slack post message / DM
+
+2:00-2:30
+- Meeting UI
+- Agent activity feed
+- Clean demo state
+
+2:30-3:00
+- Freeze features
+- Rehearse exact demo
+- Fix failures
+- Improve reliability and presentation
+
+FEATURE FREEZE RULE
+At ~2 hours, stop adding capabilities.
+Use the final hour for reliability and demo polish.
+
+PRIORITY ORDER
+
+MUST WORK
+1. Realtime voice
+2. Contextual reference resolution
+3. One GitHub read
+4. One GitHub write
+5. One Slack message
+6. Spoken confirmation
+
+VERY GOOD IF TIME PERMITS
+- PR review request
+- confirmation before consequential actions
+- pretty Slack Block Kit message
+- clickable links
+- action timeline
+
+CUT FIRST IF TIME IS SHORT
+- create issue
+- multiple contacts
+- fancy Slack formatting
+- sophisticated approval UI

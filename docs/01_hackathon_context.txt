@@ -1,0 +1,28 @@
+AGENTS EVERYWHERE HACKATHON — CONTEXT
+
+Event:
+- OpenAI x AI Tinkerers "Agents Everywhere" hackathon in Singapore.
+- One-day hackathon.
+- Solo participation is allowed.
+- Build window is roughly 255 minutes (~4h15m), but practical personal implementation target is ~3 hours.
+- Judging strongly rewards a sharp, working demo over a broad but incomplete product.
+- The challenge is about agents that live inside an existing context/workflow rather than being standalone chatbots.
+- Strong submissions should feel native to the environment they operate in and should take useful real-world actions.
+- Human approval / responsible action boundaries are valuable.
+
+Strategic interpretation:
+- Do NOT build a giant multi-agent architecture.
+- Do NOT build multiple surfaces.
+- Pick one compelling workflow and make it work end-to-end.
+- The judging demo should visibly show: context -> reasoning -> action -> confirmation.
+- The project should demonstrate something materially better because it is realtime and embedded in a workflow.
+
+Personal situation:
+- Solo builder.
+- Master's student studying Software Engineering.
+- Limited time.
+- Strong interest in agent systems, realtime APIs, backend integrations, GitHub, Slack, and production workflows.
+- Goal is not merely to finish; goal is to have a credible chance at a Singapore regional placement.
+
+Core strategic line:
+"One surface -> contextual understanding -> real side effect -> human-safe action -> visible confirmation."

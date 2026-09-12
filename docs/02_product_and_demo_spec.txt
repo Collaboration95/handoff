@@ -1,0 +1,97 @@
+PROJECT CONCEPT — RELAY (WORKING NAME)
+
+ONE-LINE IDEA
+Meetings should not end with a list of action items. They should end with the actions already done.
+
+PRODUCT
+Relay is a realtime voice agent that listens to a live meeting, understands the ongoing conversation, and performs actions across tools like GitHub and Slack when explicitly invoked by users.
+
+PRIMARY USER STORY
+While in a meeting, a user can say something natural like:
+
+"Relay, assign that issue to me and send me the details privately on Slack."
+
+Relay should:
+1. Understand what "that issue" refers to from the conversation.
+2. Perform the GitHub action.
+3. Send the Slack message.
+4. Verbally confirm what it did.
+
+IMPORTANT PRODUCT DIFFERENTIATOR
+The value is NOT speech-to-text.
+The value is:
+- continuous meeting context
+- natural references like "that", "him", "the fix", "what we decided"
+- real actions in external tools
+- realtime spoken interaction and interruption
+- lightweight approval before consequential actions
+
+MVP CAPABILITIES
+Implement only these four tools:
+1. get_github_item(issue_or_pr)
+2. assign_github_issue(issue, person)
+3. request_pr_review(pr, person)
+4. send_slack_message(person_or_channel, message)
+
+OPTIONAL FIFTH CAPABILITY IF TIME PERMITS
+5. create_github_issue(repo, title, description)
+
+DEMO STORY
+
+Scene 1 — Retrieve context
+User:
+"The auth bug is still happening. I think there's already an issue for it."
+
+User:
+"Relay, pull up GitHub issue 12."
+
+Relay:
+"Issue 12 is the authentication timeout bug. It's currently unassigned and marked high priority."
+
+UI activity:
+- GitHub #12 retrieved
+
+Scene 2 — Resolve contextual reference + perform two actions
+User:
+"Okay, assign that to me and send me the details privately on Slack."
+
+Relay:
+- Understands "that" = issue #12
+- Assigns GitHub issue #12
+- Sends Slack DM
+- Verbally confirms both actions
+
+UI activity:
+- Assigned GitHub #12 -> user
+- Slack DM sent -> user
+
+Scene 3 — PR review workflow
+User:
+"Actually there's already a fix in PR 18. Request me as a reviewer and let engineering know we're looking at it."
+
+Relay:
+- Requests user as reviewer on GitHub PR #18
+- Posts a message into #engineering on Slack
+- Verbally confirms actions
+
+Scene 4 — Realtime interruption
+Relay begins proposing or confirming an action.
+
+User interrupts:
+"Actually, hold on. Don't assign it to Sarah. Assign it to me."
+
+Relay adapts immediately and updates the action.
+
+WHY THIS DEMO WORKS
+It shows:
+- realtime voice
+- contextual language understanding
+- GitHub integration
+- Slack integration
+- real external side effects
+- natural conversational reference resolution
+- interruption handling
+- visible action trace
+
+IMPORTANT PITCH LINE
+"Most meeting assistants create notes. Relay turns decisions into actions while the meeting is still happening."
