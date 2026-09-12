@@ -26,19 +26,42 @@ when it improves clarity, trust, and demo comprehension for Handoff.
 
 ## Product hierarchy
 
-At desktop widths, give the live meeting the most visual weight and make the
-agent activity panel the second most prominent region. A viewer should be able
-to scan the UI in this order:
+### Current finance demo: two-hour build
 
-1. **Room state** — meeting name, live/reconnecting state, elapsed time, and
-   participant count.
-2. **Conversation** — people and Handoff as participants, with clear speaking
-   and muted states.
-3. **Handoff’s current understanding** — a concise contextual statement such
-   as “`that issue` → GitHub #12 · Authentication timeout”.
-4. **Action status** — proposed, waiting for approval, working, completed, or
-   failed. Never make a real side effect feel hidden or automatic.
-5. **Activity history** — short, time-ordered evidence showing what happened.
+Three people join the hosted LiveKit room through existing open-source clients.
+Handoff's web page is the companion activity and approval view. Reuse the visual
+system below in one static HTML/CSS/JS page; avoid a new framework, participant
+grid, call controls, or custom conferencing implementation for this demo.
+
+A viewer should be able to scan the page in this order:
+
+1. **Current action** — the fixed invoice objective, actual state, and one
+   relevant primary button. Use “Approve check” for a proposed objective and
+   “Create sandbox draft” only after the selected invoice passes checks.
+2. **Invoice comparison** — original and selected quantity, unit price, tax,
+   and total. Display the specific changed fields and their supporting records.
+3. **Source evidence** — effective signed contract, accepted work, previously
+   billed quantity, and purchase order. Expand raw details on demand.
+4. **Activity history** — a compact, time-ordered record of proposal, approval,
+   checks, repair if needed, creation, and actual readback.
+5. **Service state** — compact OpenAI, LiveKit, Airwallex sandbox, and Langfuse
+   readiness. Only show room counts or “Live” when the server reports them.
+
+Put the invoice and evidence in the main column and the current action/activity
+in a narrower column. On small screens, show the current action first. Keep
+approval visible while work is pending; disable repeated submissions and bind
+approval to the exact proposal. An altered proposal requires fresh approval.
+
+Distinguish “draft created” from “readback verified”; show partial or uncertain
+external writes with any known invoice ID. “No changes needed” is a valid result.
+Do not manufacture three alternatives when the initial invoice passes. Keep
+synthetic inputs and injected faults visibly labelled, and keep recorded metrics
+separate from live results. A Langfuse link must refer to an actual trace; absent
+configuration has an explicit empty state. Slack delivery is a stretch goal.
+
+For this build, prioritize a readable comparison, exact approval states, keyboard
+focus, safe text rendering, and an aria-live status message. Defer custom icons,
+animation, avatars, charts, transcript search, and a conferencing redesign.
 
 Do not let a generic dashboard, a large empty hero, decorative charts, or a
 long transcript outrank the action trace. Handoff is not a transcription or
@@ -101,7 +124,11 @@ Do not make every region a rounded floating container.
 
 ## Layout patterns
 
-### App shell
+### App shell (future embedded meeting client)
+
+The embedded meeting patterns below are a reference for later work. For the
+current finance demo, use the companion-page hierarchy above and existing
+LiveKit clients.
 
 Use a compact top bar with the Handoff mark/name at the left, room state near
 the centre or title region, and quiet utility controls at the right. Keep the

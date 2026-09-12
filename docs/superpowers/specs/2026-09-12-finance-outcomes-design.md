@@ -77,3 +77,11 @@ Two-minute script: 0–15s fixed objective and source records; 15–35s labelled
 ## Delivery and team coordination
 
 Keep implementation under finance/ and expose POST /v1/improve, POST /v1/invoices/create, GET /health, and a demo page. Retain the superseded meeting documents as history. Work on a codex/ feature branch in the local clone; do not overwrite teammates' unmerged changes. Freeze features at minute 100 and spend the final 20 minutes on integration, rehearsal, and recording.
+
+## Updated demo surface — user clarification, 12 September
+
+The core demo is a real hosted LiveKit room with three humans using existing open-source laptop clients, plus one GPT-Live-1 agent. Reuse public LiveKit AudioStream and AudioMixer APIs to combine three microphone tracks for one GPTLiveModel session; do not rebuild conferencing. The agent proposes a fixed invoice objective outside the middleware, then hands the approved objective to the finance engine. A local activity page supplies explicit approval and shows checks, candidates when needed, and the real sandbox draft/readback. Return the result in voice and activity. Slack and AML are stretch only.
+
+Use the official Airwallex CLI via a fixed subprocess adapter and sandbox OAuth, replacing the earlier direct-HTTP adapter decision. Keep bounded conditional divergence: a valid initial invoice does not need gratuitous alternatives. A clearly labelled injected-error mode can demonstrate up to three repair candidates; do not invent errors or improvement rates for the real baseline.
+
+Add Task 4b: livekit_agent.py and a small local approval/status bridge, with lifecycle tests for mixing three tracks and tests that a tool cannot create an unapproved/stale proposal. GPT-Live uses responses delegation; the model cannot claim approval based on inferred speaker identity in mixed audio. Existing open-source clients are joined to the same room; the activity page is separate. Need hosted LIVEKIT_URL/API_KEY/API_SECRET, CLI OAuth, and Langfuse keys for full live verification.
