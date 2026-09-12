@@ -34,7 +34,20 @@ PYTHONPATH=finance .venv/bin/python -c 'import os,sys; from datetime import time
 chmod 600 "$TOKEN_FILE"
 ```
 
-Repeat with `finance-member-2` and `handoff-finance-agent`, using a separate file each time. The command prints nothing to the terminal. Delete the temporary token files after the rehearsal.
+Repeat the standard-participant command with `finance-member-2`. The command prints nothing to the terminal.
+
+Mint the agent token separately so stock LiveKit clients recognize it as the Handoff agent and the SDK can maintain `lk.agent.state`:
+
+```bash
+export TOKEN_IDENTITY=handoff-finance-agent
+TOKEN_FILE=/private/tmp/handoff-finance-agent.token
+PYTHONPATH=finance .venv/bin/python -c 'import os,sys; from datetime import timedelta; from livekit import api; room=os.environ.get("FINANCE_ROOM_NAME") or os.environ.get("LIVEKIT_ROOM","handoff-finance"); token=(api.AccessToken().with_identity(os.environ["TOKEN_IDENTITY"]).with_name("Handoff").with_kind("agent").with_ttl(timedelta(hours=6)).with_grants(api.VideoGrants(room_join=True,room=room,can_publish=True,can_subscribe=True,can_publish_data=True,can_update_own_metadata=True)).to_jwt()); sys.stdout.write(token)' > "$TOKEN_FILE"
+chmod 600 "$TOKEN_FILE"
+```
+
+`with_kind("agent")` marks this direct-room participant for LiveKit's agent hooks. `can_update_own_metadata=True` lets RoomIO publish `lk.agent.state`; it does not grant worker registration. Keep the stable identity `handoff-finance-agent`. Delete all temporary token files after the rehearsal.
+
+The React starter's `/api/token` route must issue human tokens for the fixed room `process.env.LIVEKIT_ROOM || "handoff-finance"`; a random room isolates the client from the agent. Its `useAgent` hook recognizes only `ParticipantKind.AGENT` and reads `lk.agent.state`, so both agent-token settings above are required. The verified hosted participant reports name `Handoff`, kind `PARTICIPANT_KIND_AGENT`, and state `listening`.
 
 Check the local configuration without making a network connection:
 
