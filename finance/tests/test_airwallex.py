@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
-from decimal import Decimal
 
-from handoff_finance.airwallex import AirwallexClient, CommandResult
+import pytest
+
+from handoff_finance.airwallex import AirwallexClient, AirwallexError, CommandResult
 from handoff_finance.fixtures import build_case
 
 
@@ -226,6 +227,60 @@ def test_create_timeout_is_uncertain_and_repeat_does_not_issue_another_write(tmp
     assert len(runner.calls) == 2
 
 
+def test_malformed_create_success_is_uncertain_and_repeat_does_not_write(tmp_path) -> None:
+    """Catches treating an unreadable post-create response as a safe-to-retry rejection."""
+    request, draft = valid_case()
+    runner = ScriptedRunner(authenticated(), CommandResult(0, "not-json", ""))
+    client = AirwallexClient(runner=runner, cli_path=CLI, journal_path=tmp_path / "journal.json")
+
+    first = asyncio.run(client.create_verified_invoice(request, draft))
+    second = asyncio.run(client.create_verified_invoice(request, draft))
+
+    assert first["status"] == "unknown"
+    assert first["stage"] == "create_uncertain"
+    assert first["error"] == "invalid_cli_response"
+    assert second == first
+    assert len(runner.calls) == 2
+
+
+def test_interrupted_create_was_journaled_before_write_and_is_not_repeated(tmp_path) -> None:
+    """Catches the process-crash window between issuing create and recording uncertainty."""
+    request, draft = valid_case()
+    runner = ScriptedRunner(authenticated(), asyncio.CancelledError())
+    journal = tmp_path / "journal.json"
+    client = AirwallexClient(runner=runner, cli_path=CLI, journal_path=journal)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(client.create_verified_invoice(request, draft))
+    repeated = asyncio.run(client.create_verified_invoice(request, draft))
+
+    assert repeated["status"] == "unknown"
+    assert repeated["stage"] == "create_uncertain"
+    assert repeated["error"] == "operation_in_progress"
+    assert len(runner.calls) == 2
+
+
+def test_malformed_add_line_success_is_uncertain_and_repeat_does_not_write(tmp_path) -> None:
+    """Catches treating unreadable post-add output as a definite line-item failure."""
+    request, draft = valid_case()
+    runner = ScriptedRunner(
+        authenticated(),
+        ok({"id": "inv_uncertain_123", "status": "DRAFT"}),
+        CommandResult(0, "not-json", ""),
+    )
+    client = AirwallexClient(runner=runner, cli_path=CLI, journal_path=tmp_path / "journal.json")
+
+    first = asyncio.run(client.create_verified_invoice(request, draft))
+    second = asyncio.run(client.create_verified_invoice(request, draft))
+
+    assert first["status"] == "partial"
+    assert first["invoice_id"] == "inv_uncertain_123"
+    assert first["stage"] == "line_items_uncertain"
+    assert first["error"] == "invalid_cli_response"
+    assert second == first
+    assert len(runner.calls) == 3
+
+
 def test_same_request_id_with_changed_financial_content_is_a_conflict(tmp_path) -> None:
     """Catches reuse of an idempotency journal entry for changed financial intent."""
     request, draft = valid_case()
@@ -318,6 +373,41 @@ def test_ensure_demo_objects_creates_then_reads_back_and_reuses_receipt(tmp_path
         "description": "Synthetic implementation unit for the Handoff demo.",
         "metadata": {"handoff_demo": "true"},
     }
+
+
+def test_uncertain_demo_customer_create_is_journaled_and_never_repeated(tmp_path) -> None:
+    """Catches duplicate customer creation after a timeout with no returned customer ID."""
+    runner = ScriptedRunner(authenticated(), asyncio.TimeoutError())
+    client = AirwallexClient(runner=runner, cli_path=CLI, journal_path=tmp_path / "journal.json")
+
+    for _ in range(2):
+        with pytest.raises(AirwallexError, match="demo_customer_create_uncertain"):
+            asyncio.run(client.ensure_demo_objects())
+
+    writes = [call for call in runner.calls if call[0][1:3] == ("billing-customers", "create")]
+    assert len(writes) == 1
+
+
+def test_uncertain_demo_product_create_is_journaled_and_never_repeated(tmp_path) -> None:
+    """Catches duplicate product creation after an unreadable successful response."""
+    customer = {
+        "id": "cus_demo_123",
+        "name": "Handoff Demo Customer",
+        "default_billing_currency": "SGD",
+        "address": {"country_code": "SG"},
+        "metadata": {"handoff_demo": "true"},
+    }
+    runner = ScriptedRunner(
+        authenticated(), ok(customer), ok(customer), CommandResult(0, "not-json", "")
+    )
+    client = AirwallexClient(runner=runner, cli_path=CLI, journal_path=tmp_path / "journal.json")
+
+    for _ in range(2):
+        with pytest.raises(AirwallexError, match="demo_product_create_uncertain"):
+            asyncio.run(client.ensure_demo_objects())
+
+    writes = [call for call in runner.calls if call[0][1:3] == ("products", "create")]
+    assert len(writes) == 1
 
 
 def test_cli_errors_are_classified_without_echoing_sensitive_stderr(tmp_path) -> None:

@@ -33,9 +33,10 @@ Runner = Callable[[Sequence[str], str | None, float], Awaitable[CommandResult]]
 class AirwallexError(RuntimeError):
     """Credential-free adapter failure safe to show at the application boundary."""
 
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, uncertain: bool = False):
         super().__init__(code)
         self.code = code
+        self.uncertain = uncertain
 
 
 async def _subprocess_runner(argv: Sequence[str], stdin: str | None, timeout: float) -> CommandResult:
@@ -167,9 +168,9 @@ class AirwallexClient:
         try:
             decoded = json.loads(result.stdout)
         except (TypeError, json.JSONDecodeError) as exc:
-            raise AirwallexError("invalid_cli_response") from exc
+            raise AirwallexError("invalid_cli_response", uncertain=True) from exc
         if not isinstance(decoded, dict):
-            raise AirwallexError("invalid_cli_response")
+            raise AirwallexError("invalid_cli_response", uncertain=True)
         if decoded.get("ok") is False:
             raise AirwallexError(_classify_error(json.dumps(decoded.get("error", {}))))
         return decoded.get("data", decoded)
@@ -302,6 +303,13 @@ class AirwallexClient:
             if self.legal_entity_id:
                 create_payload["legal_entity_id"] = _safe_id(self.legal_entity_id)
 
+            in_progress = _result(
+                "unknown", "create_uncertain", error="operation_in_progress"
+            )
+            entries[request.request_id] = self._journal_entry(
+                fingerprint, in_progress, operation_ids
+            )
+            self._save_journal(journal)
             try:
                 created = await self._call("invoices", "create", payload=create_payload, write=True)
             except asyncio.TimeoutError:
@@ -310,7 +318,11 @@ class AirwallexClient:
                 self._save_journal(journal)
                 return result
             except AirwallexError as exc:
-                result = _result("failed", "create_failed", error=exc.code)
+                result = _result(
+                    "unknown" if exc.uncertain else "failed",
+                    "create_uncertain" if exc.uncertain else "create_failed",
+                    error=exc.code,
+                )
                 entries[request.request_id] = self._journal_entry(fingerprint, result, operation_ids)
                 self._save_journal(journal)
                 return result
@@ -328,7 +340,11 @@ class AirwallexClient:
                 candidate_state = created.get("status") if "status" in created else created.get("state")
                 created_state = candidate_state if isinstance(candidate_state, str) else None
             pending = _result(
-                "partial", "line_items_pending", invoice_id=invoice_id, state=created_state
+                "partial",
+                "line_items_uncertain",
+                invoice_id=invoice_id,
+                state=created_state,
+                error="operation_in_progress",
             )
             entries[request.request_id] = self._journal_entry(fingerprint, pending, operation_ids)
             self._save_journal(journal)
@@ -371,7 +387,7 @@ class AirwallexClient:
             except AirwallexError as exc:
                 result = _result(
                     "partial",
-                    "line_items_failed",
+                    "line_items_uncertain" if exc.uncertain else "line_items_failed",
                     invoice_id=invoice_id,
                     state=created_state,
                     error=exc.code,
@@ -470,20 +486,31 @@ class AirwallexClient:
 
     async def ensure_demo_objects(self) -> dict[str, str]:
         async with _WRITE_LOCK:
+            journal = self._load_journal()
+            receipt = journal.setdefault("demo_objects", {})
+            operations = receipt.setdefault("operations", {})
+            for resource in ("customer", "product"):
+                operation = operations.get(resource, {})
+                if not receipt.get(f"{resource}_id") and operation.get("stage") in {
+                    "create_pending",
+                    "create_uncertain",
+                }:
+                    raise AirwallexError(f"demo_{resource}_create_uncertain")
+
             ready = await self.readiness()
             if not ready["ready"]:
                 raise AirwallexError(ready["error"] or "not_ready")
-            journal = self._load_journal()
-            receipt = journal.setdefault("demo_objects", {})
 
             customer_id = receipt.get("customer_id")
             if customer_id:
                 customer_id = _safe_id(customer_id)
                 customer = await self._call("billing-customers", "get", customer_id)
             else:
-                customer = await self._call(
-                    "billing-customers",
-                    "create",
+                customer, customer_id = await self._create_demo_resource(
+                    journal,
+                    receipt,
+                    resource="customer",
+                    command=("billing-customers", "create"),
                     payload={
                         "request_id": str(uuid.uuid5(uuid.NAMESPACE_URL, "handoff-demo:customer")),
                         "name": "Handoff Demo Customer",
@@ -491,11 +518,7 @@ class AirwallexClient:
                         "address": {"country_code": "SG"},
                         "metadata": {"handoff_demo": "true"},
                     },
-                    write=True,
                 )
-                customer_id = _safe_id(customer.get("id") if isinstance(customer, dict) else None)
-                receipt["customer_id"] = customer_id
-                self._save_journal(journal)
                 customer = await self._call("billing-customers", "get", customer_id)
             if not self._valid_demo_customer(customer):
                 raise AirwallexError("demo_customer_readback_mismatch")
@@ -505,24 +528,60 @@ class AirwallexClient:
                 product_id = _safe_id(product_id)
                 product = await self._call("products", "get", product_id)
             else:
-                product = await self._call(
-                    "products",
-                    "create",
+                product, product_id = await self._create_demo_resource(
+                    journal,
+                    receipt,
+                    resource="product",
+                    command=("products", "create"),
                     payload={
                         "request_id": str(uuid.uuid5(uuid.NAMESPACE_URL, "handoff-demo:product")),
                         "name": "Handoff Demo Implementation Unit",
                         "description": "Synthetic implementation unit for the Handoff demo.",
                         "metadata": {"handoff_demo": "true"},
                     },
-                    write=True,
                 )
-                product_id = _safe_id(product.get("id") if isinstance(product, dict) else None)
-                receipt["product_id"] = product_id
-                self._save_journal(journal)
                 product = await self._call("products", "get", product_id)
             if not self._valid_demo_product(product):
                 raise AirwallexError("demo_product_readback_mismatch")
             return {"customer_id": customer_id, "product_id": product_id}
+
+    async def _create_demo_resource(
+        self,
+        journal: dict[str, Any],
+        receipt: dict[str, Any],
+        *,
+        resource: str,
+        command: tuple[str, str],
+        payload: dict[str, Any],
+    ) -> tuple[Any, str]:
+        operations = receipt.setdefault("operations", {})
+        operations[resource] = {
+            "request_id": payload["request_id"],
+            "stage": "create_pending",
+        }
+        self._save_journal(journal)
+        try:
+            created = await self._call(*command, payload=payload, write=True)
+            resource_id = _safe_id(created.get("id") if isinstance(created, dict) else None)
+        except asyncio.TimeoutError:
+            operations[resource]["stage"] = "create_uncertain"
+            operations[resource]["error"] = "timeout"
+            self._save_journal(journal)
+            raise AirwallexError(f"demo_{resource}_create_uncertain")
+        except AirwallexError as exc:
+            uncertain = exc.uncertain or exc.code == "unsafe_resource_id"
+            operations[resource]["stage"] = (
+                "create_uncertain" if uncertain else "create_failed"
+            )
+            operations[resource]["error"] = exc.code
+            self._save_journal(journal)
+            if uncertain:
+                raise AirwallexError(f"demo_{resource}_create_uncertain") from exc
+            raise
+        receipt[f"{resource}_id"] = resource_id
+        operations[resource]["stage"] = "created"
+        self._save_journal(journal)
+        return created, resource_id
 
     @staticmethod
     def _valid_demo_customer(value: Any) -> bool:
