@@ -11,14 +11,20 @@ the companion invoice page from the operator's laptop.
 - Prepare the synthetic customer/product through the demo setup operation.
 - Select the September case. It contains eight accepted units, two previously
   invoiced units, and a signed amendment setting the unit price to SGD90.
-- For the repair demonstration, explicitly enable **Injected stale draft**.
-  This starts from ten units at SGD100 and is a controlled test, not a measured
-  failure of Airwallex's native agent. Keep its label visible throughout.
-- For a voice-created proposal in this controlled test, set
-  `FINANCE_FAULT_INJECTION=true` before starting the voice bridge. Leave it
-  false when measuring a real model baseline.
-- Ensure there is no previous pending proposal. Do not reuse a completed
-  billing reference to make another invoice just for rehearsal.
+- Prefer the voice autofix command below to demonstrate the conversation
+  activating the workflow. Use **Simulate autofix** as the manual fallback.
+  Both start a fresh September proposal with ten units at SGD100 and
+  immediately check and attempt to repair it. This is a controlled test, not
+  a measured failure of Airwallex's native agent. Keep its label visible.
+- The dedicated autofix tool always selects the controlled fault mode,
+  regardless of `FINANCE_FAULT_INJECTION`. That flag is only needed to inject
+  the stale proposal in the ordinary voice invoice-proposal path. Leave it
+  false when measuring a real model baseline through that ordinary path.
+- Ensure there is no previous pending proposal. Rehearsing the same billing
+  reference reuses a known verified draft only after a fresh matching readback.
+  The page reports **Existing sandbox draft verified**. Say that it verified
+  the existing draft; do not describe it as a new invoice. A mismatch or an
+  uncertain earlier write remains blocked from making a second invoice.
 - Keep the actual Langfuse trace page available. Use the full recorded
   evaluation report for metrics; do not invent a percentage improvement.
 - Describe the evidence as platform-supplied synthetic records. We have not
@@ -29,12 +35,18 @@ the companion invoice page from the operator's laptop.
 
 | Time | Speaker / action |
 | --- | --- |
-| 0:00–0:20 | Person 1: “Can we close out the September implementation work? Eight units were accepted, and two were already invoiced.” Person 2: “The signed amendment changed the rate to ninety dollars. Handoff, please propose the invoice for the remaining accepted work.” |
-| 0:20–0:35 | Handoff proposes the invoice objective in voice and the activity page. The operator approves the invoice workflow, authorizing a sandbox draft after checks pass. |
-| 0:35–0:55 | Show the original and selected invoice. “This controlled stale draft would bill ten units at the old rate. The evidence supports six at SGD90: SGD540 before the supplied tax.” Expand the failed checks and repaired candidate. |
+| 0:00–0:20 | Person 1: “Can we close out the September implementation work? Eight units were accepted, and two were already invoiced.” Person 2: “The signed amendment changed the rate to ninety dollars. Handoff, simulate how you automatically fix an incorrect invoice for the September work. Do not create or send it yet.” |
+| 0:20–0:35 | Handoff starts the controlled autofix test; the operator can click **Simulate autofix** as a fallback. The page updates while the real model repairs the injected proposal. No invoice has been created. |
+| 0:35–0:55 | Show the original, verified proposal, and actual correction summary. “This controlled stale draft would bill ten units at the old rate. The evidence supports six at SGD90: SGD540 before the supplied tax.” Expand the failed original checks. When the state says **Autofix complete · awaiting approval**, the operator clicks **Approve invoice workflow**. |
 | 0:55–1:15 | Handoff calls the approved draft-creation tool (or the operator uses **Create sandbox draft** as a fallback). Show actual activity and invoice ID. Wait for readback verification before describing success. |
 | 1:15–1:35 | Handoff announces the actual result in the call. Open the correlated Langfuse trace and point to source evidence, model call, checks, and external operation. |
 | 1:35–2:00 | “The platform supplies the objective. Handoff checks the proposed execution, repairs it only if needed, and verifies what the finance platform actually created. This demo uses synthetic evidence and a sandbox draft.” |
+
+If the operator starts the test with the UI button, narrate the correction
+manually and use the UI's **Create sandbox draft** button after approval. The
+voice agent may still be watching an earlier proposal, so do not promise a
+spoken result for this fallback. Use the voice-triggered path when demonstrating
+that the conference conversation activates the workflow.
 
 ## If a dependency fails
 
@@ -45,6 +57,15 @@ An explicitly labelled recorded run can illustrate the flow while disclosing
 that the current run did not complete.
 
 ## Complex-command rehearsal
+
+**Simulate autofix** also starts a fresh controlled test when the current action
+is **Needs review**. It keeps the business objective correct and injects the
+incorrect starting proposal separately. Do not ask the model to preserve
+intentional errors: that describes a different objective and can legitimately
+result in review. The button starts actual checking and a model repair attempt;
+it never displays a prerecorded success or creates an invoice automatically.
+If repair cannot produce a supported proposal, **Needs review** remains the
+honest outcome. Approval and **Create sandbox draft** follow successful repair.
 
 Use this command for the same small fixture; it requires no additional
 integration or model pipeline:

@@ -184,6 +184,137 @@ def test_invalid_core_draft_is_rejected_before_auth_or_financial_writes(tmp_path
     assert runner.calls == []
 
 
+def test_verify_existing_invoice_reads_current_record_without_writes_or_journal_changes(tmp_path) -> None:
+    """Catches duplicate creation and trusting a previous success without fresh readback."""
+    request, draft = valid_case()
+    runner = ScriptedRunner(authenticated(), ok(invoice_record()), ok({"items": [line_record()]}))
+    journal = tmp_path / "journal.json"
+    journal.write_text('{"invoices":{"previous":{"stage":"verified"}}}\n')
+    original_journal = journal.read_bytes()
+    client = AirwallexClient(runner=runner, cli_path=CLI, journal_path=journal)
+
+    result = asyncio.run(client.verify_existing_invoice(request, draft, "inv_demo_123"))
+
+    assert result["status"] == "existing"
+    assert result["stage"] == "verified"
+    assert result["verified"] is True
+    assert result["reused_existing"] is True
+    assert result["invoice_id"] == "inv_demo_123"
+    assert result["state"] == "DRAFT"
+    assert result["hosted_url"] == "https://sandbox.airwallex.example/inv_demo_123"
+    assert len(result["checks"]) == 16
+    assert all(result["checks"].values())
+    assert [call[0] for call in runner.calls] == [
+        (CLI, "auth", "whoami", *COMMON),
+        (CLI, "invoices", "get", "inv_demo_123", *COMMON),
+        (CLI, "invoices", "line-items", "list", "inv_demo_123", *COMMON),
+    ]
+    assert all(call[1] is None for call in runner.calls)
+    assert journal.read_bytes() == original_journal
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "failed_check"),
+    [
+        ("id", "inv_unrelated", "invoice_id"),
+        ("total_amount", 589, "total_amount"),
+        ("status", "FINALIZED", "state"),
+        ("handoff_reference", "OTHER-BILL", "billing_reference"),
+        ("contract_id", "contract-old", "invoice_source_ids"),
+        ("fulfilment_id", "fulfilment-other", "invoice_source_ids"),
+    ],
+)
+def test_verify_existing_invoice_blocks_mismatched_record_without_recreating(
+    tmp_path, field, value, failed_check
+) -> None:
+    """Catches reusing an unrelated, changed, or finalized invoice as a verified draft."""
+    request, draft = valid_case()
+    invoice = invoice_record()
+    if field in {"handoff_reference", "contract_id", "fulfilment_id"}:
+        invoice["metadata"][field] = value
+    else:
+        invoice[field] = value
+    runner = ScriptedRunner(authenticated(), ok(invoice), ok({"items": [line_record()]}))
+    client = AirwallexClient(runner=runner, cli_path=CLI, journal_path=tmp_path / "journal.json")
+
+    result = asyncio.run(client.verify_existing_invoice(request, draft, "inv_demo_123"))
+
+    assert result["verified"] is False
+    assert result["stage"] == "verification_failed"
+    assert result["error"] == "readback_mismatch"
+    assert result["checks"][failed_check] is False
+    assert not result.get("reused_existing")
+    assert "hosted_url" not in result
+    assert all("--confirm" not in call[0] and call[1] is None for call in runner.calls)
+    assert not client.journal_path.exists()
+
+
+@pytest.mark.parametrize("unsafe_id", ["../inv_demo", "--help", ""])
+def test_verify_existing_invoice_rejects_unsafe_ids_before_cli(tmp_path, unsafe_id) -> None:
+    """Catches untrusted invoice IDs reaching the CLI command boundary."""
+    request, draft = valid_case()
+    runner = ScriptedRunner()
+    client = AirwallexClient(runner=runner, cli_path=CLI, journal_path=tmp_path / "journal.json")
+
+    result = asyncio.run(client.verify_existing_invoice(request, draft, unsafe_id))
+
+    assert result["verified"] is False
+    assert result["error"] == "unsafe_resource_id"
+    assert runner.calls == []
+
+
+def test_verify_existing_invoice_rechecks_core_before_cli(tmp_path) -> None:
+    """Catches a changed, invalid approved selection passing through reconciliation."""
+    request, draft = valid_case()
+    runner = ScriptedRunner()
+    client = AirwallexClient(runner=runner, cli_path=CLI, journal_path=tmp_path / "journal.json")
+
+    result = asyncio.run(
+        client.verify_existing_invoice(request, draft.model_copy(update={"quantity": 10}), "inv_demo_123")
+    )
+
+    assert result["verified"] is False
+    assert result["error"] == "core_validation_failed"
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        (asyncio.TimeoutError(), "timeout"),
+        (CommandResult(1, "", "forbidden: secret"), "permission_error"),
+        (CommandResult(0, "not-json", ""), "invalid_cli_response"),
+    ],
+)
+def test_verify_existing_invoice_failed_read_is_nonverified_and_never_creates(tmp_path, response, error) -> None:
+    """Catches treating failed readback as a verified reuse or a reason to create again."""
+    request, draft = valid_case()
+    runner = ScriptedRunner(authenticated(), response)
+    client = AirwallexClient(runner=runner, cli_path=CLI, journal_path=tmp_path / "journal.json")
+
+    result = asyncio.run(client.verify_existing_invoice(request, draft, "inv_demo_123"))
+
+    assert result["verified"] is False
+    assert result["invoice_id"] == "inv_demo_123"
+    assert result["error"] == error
+    assert not result.get("reused_existing")
+    assert "secret" not in json.dumps(result)
+    assert all("--confirm" not in call[0] and call[1] is None for call in runner.calls)
+
+
+def test_verify_existing_invoice_refuses_production_before_invoice_reads(tmp_path) -> None:
+    """Catches using sandbox invoice IDs in a globally selected production CLI profile."""
+    request, draft = valid_case()
+    runner = ScriptedRunner(ok({"is_authenticated": True, "mode": "production", "base_url": "https://api.airwallex.com"}))
+    client = AirwallexClient(runner=runner, cli_path=CLI, journal_path=tmp_path / "journal.json")
+
+    result = asyncio.run(client.verify_existing_invoice(request, draft, "inv_demo_123"))
+
+    assert result["verified"] is False
+    assert result["error"] == "sandbox_required"
+    assert len(runner.calls) == 1
+
+
 def test_add_line_failure_retains_partial_invoice_and_never_recreates(tmp_path) -> None:
     """Catches loss of the real invoice ID and duplicate creation after a partial write."""
     request, draft = valid_case()

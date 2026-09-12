@@ -6,6 +6,7 @@ Handoff's demo uses two human participants, GPT-Live-1, an existing LiveKit clie
 
 - **Invoice repair:** an explicitly injected proposal for ten units at SGD100 was repaired to six units at SGD90 using supplied synthetic evidence. Subtotal SGD540; supplied tax SGD48.60; total SGD588.60. The objective was preserved.
 - **Airwallex sandbox:** the browser created draft `inv_sgpvpmn67hm7t4jjv0e` for the unique rehearsal reference `HANDOFF-REHEARSAL-20260912T0643Z`. All 13 external readback checks passed. No finalization, payment, or customer delivery was performed.
+- **Repeated demo runs:** the previously approved September action was retried against the fixed backend. It freshly verified all 16 checks on existing draft `inv_sgpvxfrc8hm7ubrl79o`, returned `reused_existing: true`, and left the invoice journal count unchanged at three. [The reconciliation trace](https://us.cloud.langfuse.com/project/cmtxxe6ur06dhad0i1aq2s59j/traces/ee667a1d347b75732a3360108309bbc5) records the readback. No duplicate draft was created.
 - **Langfuse:** [the creation trace](https://us.cloud.langfuse.com/project/cmtxxe6ur06dhad0i1aq2s59j/traces/a618c6935e359a0a195631bd49cbf983) was read back through the installed SDK. It contains the root/session correlation and actual invoice-create, line-add, invoice-get, and line-list tool observations, with inputs and outputs. [The repair trace](https://us.cloud.langfuse.com/project/cmtxxe6ur06dhad0i1aq2s59j/traces/101ec52f1461668e416b8694e4747b8b) records the corresponding model decision.
 - **LiveKit and GPT-Live:** two synthetic remote microphone publishers joined the Cloud room. The bridge reported two microphones, GPT-Live heard the mixed audio, and its delegate called the real proposal API. The resulting proposal remained pending and unapproved, with no invoice. A separate synthetic listener received nonzero audio published by the agent. Both test clients were disconnected afterward.
 - **React starter compatibility:** its token route must join the fixed `handoff-finance` room. The bridge's token must use participant kind `agent` and allow updating its own metadata, so the starter can recognize `lk.agent.state=listening`. These settings were verified against LiveKit RoomService. A default starter with random rooms cannot reach this already-running bridge.
@@ -18,7 +19,9 @@ The two-person rehearsal with actual laptop microphones remains an operator chec
 PYTHONPATH=finance .venv/bin/python -m pytest -q -o addopts='' finance/tests
 ```
 
-94 tests passed. The only warning was an upstream Starlette/AnyIO deprecation. Independent review findings on proposal races, microphone lifecycle, paired latency, and selected-candidate display were fixed and reviewed again.
+130 tests passed after adding the dedicated autofix simulation, draft reconciliation, and voice reconnect supervisor. The checks cover repair without approval or external writes, approval of the displayed correction without a second model call, honest repair failure, read-only verification of existing drafts, mismatch and uncertain-write protection, voice creation timeouts, safe conflict messages, and reconnecting after room disconnects. HTTP transport tests require permission to bind a local test server. The only warning was an upstream Starlette/AnyIO deprecation. Independent review found no blockers in the reconciliation path; earlier findings on proposal races, microphone lifecycle, paired latency, and selected-candidate display were fixed and reviewed again.
+
+The imported LiveKit React client passed its production build, lint, and type checking. The build reports two inherited starter lint warnings and a workspace lockfile warning.
 
 ## Evaluation results and limits
 

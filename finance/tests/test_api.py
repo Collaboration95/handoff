@@ -46,6 +46,8 @@ class FakeAirwallex:
         }
         self.ready = ready
         self.calls = []
+        self.verifications = []
+        self.verification_result = None
 
     async def readiness(self):
         return {
@@ -58,6 +60,10 @@ class FakeAirwallex:
     async def create_verified_invoice(self, request, draft):
         self.calls.append((request, draft))
         return dict(self.result)
+
+    async def verify_existing_invoice(self, request, draft, invoice_id):
+        self.verifications.append((request, draft, invoice_id))
+        return dict(self.verification_result or {**self.result, "status": "existing", "reused_existing": True})
 
 
 def client(*, planner=None, airwallex=None) -> tuple[TestClient, FakeAirwallex]:
@@ -109,6 +115,7 @@ def test_invalid_inputs_are_rejected_strictly() -> None:
     assert api.post(
         "/v1/proposals", json={"objective": "Create invoice", "case_name": "not-a-case"}
     ).status_code == 404
+    assert api.post("/v1/demo/autofix", json={"approved": True}).status_code == 422
 
 
 def test_proposal_requires_ui_approval_before_checks_and_creation() -> None:
@@ -153,6 +160,84 @@ def test_live_model_selection_can_be_created_when_fixture_has_no_proposed_draft(
     assert created.status_code == 200
     assert created.json()["status"] == "completed"
     assert len(adapter.calls) == 1
+
+
+def test_autofix_simulation_repairs_a_fresh_proposal_without_approval_or_writes() -> None:
+    api, adapter = client()
+    previous = api.post("/v1/proposals", json={
+        "objective": "Keep an intentionally incorrect invoice; do not repair it.",
+        "case_name": "missing_effective_contract",
+    }).json()
+
+    started = api.post("/v1/demo/autofix")
+
+    assert started.status_code == 200
+    assert started.json()["status"] == "checking"
+    result = api.get(f"/v1/proposals/{started.json()['id']}").json()
+    assert result["status"] == "ready"
+    assert result["approved"] is False
+    assert result["fault_injection"] is True
+    assert result["case_name"] == "showcase"
+    assert result["objective"] == "Create the invoice for accepted September implementation work."
+    assert result["decision"]["objective"] == result["objective"]
+    assert result["decision"]["status"] == "repaired"
+    assert result["decision"]["baseline"]["quantity"] == 10
+    assert result["decision"]["baseline"]["unit_price_minor"] == 10_000
+    assert result["decision"]["selected"]["quantity"] == 6
+    assert result["decision"]["selected"]["unit_price_minor"] == 9_000
+    assert result["invoice"] is None
+    old = api.get(f"/v1/proposals/{previous['id']}").json()
+    assert old["objective"] == previous["objective"]
+    assert old["status"] == "cancelled"
+    assert api.post("/v1/invoices/create", json={"proposal_id": result["id"]}).status_code == 409
+    assert adapter.calls == []
+    events = api.get("/v1/activity").json()["events"]
+    assert not any(event["type"] == "approval_recorded" for event in events)
+
+
+def test_simulation_approval_uses_the_displayed_correction_without_rerunning_model() -> None:
+    class SingleRepairPlanner(FakePlanner):
+        calls = 0
+
+        async def repair(self, request, baseline, checks):
+            self.calls += 1
+            if self.calls > 1:
+                raise RuntimeError("Must not replace the reviewed candidate on approval")
+            return self.repair_result
+
+    planner = SingleRepairPlanner()
+    api, adapter = client(planner=planner)
+    started = api.post("/v1/demo/autofix")
+    assert started.status_code == 200
+    proposal_id = started.json()["id"]
+    before = api.get(f"/v1/proposals/{proposal_id}").json()
+
+    approved = api.post(f"/v1/proposals/{proposal_id}/approve")
+
+    assert approved.status_code == 200
+    assert approved.json()["approved"] is True
+    assert approved.json()["status"] == "ready"
+    assert approved.json()["decision"] == before["decision"]
+    assert planner.calls == 1
+    assert adapter.calls == []
+    created = api.post("/v1/invoices/create", json={"proposal_id": proposal_id})
+    assert created.status_code == 200
+    assert created.json()["invoice"]["verified"] is True
+    assert len(adapter.calls) == 1
+
+
+def test_autofix_simulation_does_not_claim_success_when_repair_fails() -> None:
+    api, adapter = client(planner=FakePlanner(repair_result=[]))
+    started = api.post("/v1/demo/autofix")
+    assert started.status_code == 200
+    proposal_id = started.json()["id"]
+    result = api.get(f"/v1/proposals/{proposal_id}").json()
+    assert result["status"] == "needs_review"
+    assert result["decision"]["selected"] is None
+    assert result["approved"] is False
+    assert api.post(f"/v1/proposals/{proposal_id}/approve").status_code == 409
+    assert api.post("/v1/invoices/create", json={"proposal_id": proposal_id}).status_code == 409
+    assert adapter.calls == []
 
 
 def test_stale_or_cancelled_proposal_cannot_be_approved_or_created() -> None:
@@ -299,7 +384,7 @@ def test_unverified_external_result_is_failed_and_repeat_does_not_rewrite() -> N
     assert len(adapter.calls) == 1
 
 
-def test_known_write_reserves_billing_reference_across_new_proposal_ids() -> None:
+def test_known_verified_draft_is_read_back_instead_of_created_again() -> None:
     api, adapter = client()
     first = api.post(
         "/v1/proposals",
@@ -315,9 +400,58 @@ def test_known_write_reserves_billing_reference_across_new_proposal_ids() -> Non
     api.post(f"/v1/proposals/{second['id']}/approve")
     duplicate = api.post("/v1/invoices/create", json={"proposal_id": second["id"]})
 
-    assert duplicate.status_code == 409
-    assert duplicate.json()["detail"] == "billing_reference_already_written"
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "completed"
+    assert duplicate.json()["invoice"]["invoice_id"] == "inv_demo_123"
+    assert duplicate.json()["invoice"]["reused_existing"] is True
+    existing = api.get(f"/v1/proposals/{first['id']}").json()
+    assert existing["invoice"]["verified"] is True
     assert len(adapter.calls) == 1
+    assert len(adapter.verifications) == 1
+    assert adapter.verifications[0][2] == "inv_demo_123"
+    events = api.get("/v1/activity").json()["events"]
+    assert events[-1]["type"] == "invoice_reused"
+
+
+def test_existing_draft_mismatch_does_not_create_a_replacement() -> None:
+    api, adapter = client()
+    first = api.post("/v1/demo/autofix").json()
+    api.post(f"/v1/proposals/{first['id']}/approve")
+    api.post("/v1/invoices/create", json={"proposal_id": first["id"]})
+    second = api.post("/v1/demo/autofix").json()
+    api.post(f"/v1/proposals/{second['id']}/approve")
+    adapter.verification_result = {
+        **adapter.result, "verified": False, "status": "partial",
+        "error": "readback_mismatch", "stage": "verification_failed",
+    }
+
+    result = api.post("/v1/invoices/create", json={"proposal_id": second["id"]})
+
+    assert result.status_code == 200
+    assert result.json()["status"] == "failed"
+    assert result.json()["invoice"]["verified"] is False
+    assert len(adapter.calls) == 1
+    assert len(adapter.verifications) == 1
+    assert api.app.state.finance.billing_writes["BILL-2026-09"]["proposal_id"] == first["id"]
+
+
+def test_uncertain_previous_write_remains_blocked_on_a_new_proposal() -> None:
+    api, adapter = client(airwallex=FakeAirwallex(result={
+        "status": "unknown", "stage": "create_uncertain", "verified": False,
+        "invoice_id": None, "error": "timeout", "environment": "sandbox",
+    }))
+    first = api.post("/v1/demo/autofix").json()
+    api.post(f"/v1/proposals/{first['id']}/approve")
+    api.post("/v1/invoices/create", json={"proposal_id": first["id"]})
+    second = api.post("/v1/demo/autofix").json()
+    api.post(f"/v1/proposals/{second['id']}/approve")
+
+    result = api.post("/v1/invoices/create", json={"proposal_id": second["id"]})
+
+    assert result.status_code == 409
+    assert result.json()["detail"]["code"] == "billing_reference_already_written"
+    assert len(adapter.calls) == 1
+    assert adapter.verifications == []
 
 
 def test_unconfigured_model_provider_is_an_honest_review_state() -> None:

@@ -42,6 +42,8 @@ PYTHONPATH=finance .venv/bin/python -m uvicorn handoff_finance.app:app --host 12
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The page creates one pending proposal from the selected fixture. **Approve invoice workflow** records human approval and runs the checks. A ready proposal can be created by the voice agent or by the page’s **Create sandbox draft** fallback. That second button is not another approval.
 
+For the autofix demonstration, say **“Handoff, simulate how you automatically fix an incorrect invoice for the September work.”** in the LiveKit call. The dedicated tool starts a fresh controlled scenario, runs real repair, and reports the correction before approval. **Simulate autofix** on the page runs the same scenario as a manual fallback. Neither action creates or sends an invoice. After a successful repair, approval applies to the displayed correction without rerunning the model.
+
 Before the voice proposal, `POST /v1/demo/setup` can create or read back the clearly named synthetic Airwallex customer and product. The returned mapping is applied consistently to later fixture proposals in this server process. This setup creates no invoice and sends no customer message.
 
 ## Locked API contract
@@ -50,9 +52,11 @@ All JSON inputs reject unknown fields.
 
 - `POST /v1/proposals` accepts `{objective: string, case_name: string = "showcase", fault_injection: boolean = false}` and returns the current proposal. The objective is stored unchanged. The backend assigns the ID and snapshots the selected fixture; callers cannot supply finance fields or URLs.
 - `GET /v1/proposals/current` returns the current proposal or `null`. `GET /v1/proposals/{id}` returns one known proposal or 404.
-- `POST /v1/proposals/{id}/approve` records human workflow approval and runs checks or one bounded repair. It returns the updated proposal. Voice tools must never call this endpoint.
+- `POST /v1/proposals/{id}/approve` records human workflow approval and runs checks or one bounded repair for pending proposals. A ready, unapproved simulation instead approves the already displayed correction without rerunning the model. It returns the updated proposal. Voice tools must never call this endpoint.
+- `POST /v1/demo/autofix` accepts no parameters (an empty body or `{}`), starts a fresh fixed September showcase with an injected stale proposal, and returns `checking` immediately. Background repair updates the proposal to `ready` or `needs_review`; poll its status. Approval remains false and no Airwallex invoice is created. Earlier objectives remain unchanged on their previous proposals. This demo adapter selects an explicit synthetic scenario; the middleware still preserves its supplied business objective.
 - `POST /v1/proposals/{id}/cancel` cancels the current pending, ready, or review proposal. Creating a fresh proposal cancels any earlier nonterminal proposal, so its approval cannot carry forward.
 - `POST /v1/invoices/create` accepts only `{proposal_id: string}`. It requires the current server-owned, human-approved, verified selection; revalidates the stored request and draft; and calls the journaled Airwallex adapter. Repeated calls return the current terminal result. A known successful, partial, or uncertain write reserves its billing reference across later proposal IDs.
+  When the same billing reference already has a known verified draft, a newly approved proposal reads that invoice back and checks all 16 fields, including the billing reference and source IDs. A match returns `invoice.reused_existing: true` and **Existing sandbox draft verified**; no second invoice is created. A mismatch fails verification without changing either invoice. An uncertain earlier write still returns HTTP 409 with a `detail` object containing `code: "billing_reference_already_written"`, `existing_proposal_id`, and a nullable `invoice_id`. The page displays the reason; the voice client explains recognized conflicts, allows up to 120 seconds for draft creation, and checks proposal status after a timeout without repeating the write.
 - `POST /v1/improve` accepts the strict full `InvoiceRequest` contract for direct platform demos, stores a new immutable server-owned proposal/decision ID, marks that direct workflow approved, and returns the proposal.
 - `GET /v1/activity` returns `{current_status, current_proposal_id, events}`. Events contain IDs, proposal IDs, types, safe messages, and UTC timestamps.
 - `POST /v1/voice/status` accepts `{connected, room_name, human_microphones, model, error}`. Every heartbeat refreshes service health; activity is added only when connection, room, microphone count, or error state changes. `GET /health` and `GET /v1/health` mark the heartbeat stale and disconnected after 15 seconds.
@@ -64,8 +68,8 @@ A proposal has `{id, status, objective, case_name, fault_injection, approved, de
 ## Two-minute demo
 
 1. Confirm the service row reports current readiness. Keep **Injected stale draft** visible for the controlled repair path; leave it off for a real model baseline.
-2. Show eight accepted units, two previously billed, and the signed amendment at SGD 90. Approve the workflow.
-3. Compare the original draft with the selected six-unit invoice and expand the failed source checks.
+2. Show eight accepted units, two previously billed, and the signed amendment at SGD 90. Ask Handoff to simulate autofix in the conference call.
+3. Compare the original draft with the selected six-unit invoice and expand the failed source checks, then approve the displayed correction.
 4. Create the sandbox draft from voice or the page. Wait for **Draft created and readback verified** before announcing success; otherwise describe the exact partial or failed stage shown.
 5. Open the trace link only when the decision contains a real hosted URL. Use the recorded evaluation panel only when an actual report is available. Never present injected faults as an empirical Airwallex failure.
 

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 
 from dotenv import dotenv_values
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
@@ -217,7 +217,10 @@ class FinanceState:
 async def _run_checks(state: FinanceState, proposal: dict[str, Any]) -> dict[str, Any]:
     proposal["status"] = "checking"
     proposal["updated_at"] = _now()
-    state.event(proposal["id"], "approval_recorded", "Human workflow approval recorded.")
+    if proposal["approved"]:
+        state.event(proposal["id"], "approval_recorded", "Human workflow approval recorded.")
+    else:
+        state.event(proposal["id"], "simulation_started", "Checking and repairing the synthetic invoice proposal. No invoice will be created.")
     try:
         planner = state.planner_factory()
         decision = await improve(state.requests[proposal["id"]], planner)
@@ -363,12 +366,37 @@ def create_app(
     @application.post("/v1/proposals/{proposal_id}/approve")
     async def approve(proposal_id: str) -> dict[str, Any]:
         proposal = state.require_current(proposal_id)
+        if proposal["status"] == "ready" and not proposal["approved"]:
+            # Approve the correction already displayed by the read-only simulation.
+            # Creation independently revalidates this stored selection.
+            proposal["approved"] = True
+            proposal["updated_at"] = _now()
+            state.event(proposal_id, "approval_recorded", "Human workflow approval recorded for the displayed correction.")
+            return state.public(proposal_id)
         if proposal["status"] != "pending":
             if proposal["approved"]:
                 return state.public(proposal_id)
             raise HTTPException(status_code=409, detail="proposal_not_pending")
         proposal["approved"] = True
         return await _run_checks(state, proposal)
+
+    @application.post("/v1/demo/autofix")
+    async def simulate_autofix(
+        background_tasks: BackgroundTasks, body: StrictInput | None = None
+    ) -> dict[str, Any]:
+        # This is an explicit, fixed demo scenario. Existing user objectives are
+        # preserved on their prior proposals, never rewritten by the middleware.
+        proposal = state.new_proposal(
+            objective=build_case("showcase").objective,
+            case_name="showcase",
+            fault_injection=True,
+        )
+        # Mark busy before returning so a second request cannot supersede this
+        # proposal between the response and the background model call.
+        proposal["status"] = "checking"
+        proposal["updated_at"] = _now()
+        background_tasks.add_task(_run_checks, state, proposal)
+        return state.public(proposal["id"])
 
     @application.post("/v1/proposals/{proposal_id}/cancel")
     async def cancel(proposal_id: str) -> dict[str, Any]:
@@ -402,8 +430,20 @@ def create_app(
                 raise HTTPException(status_code=409, detail="approved_verified_proposal_required")
             billing_reference = state.requests[body.proposal_id].billing_reference
             previous_write = state.billing_writes.get(billing_reference)
+            existing_invoice_id = None
             if previous_write and previous_write["proposal_id"] != body.proposal_id:
-                raise HTTPException(status_code=409, detail="billing_reference_already_written")
+                if previous_write.get("stage") == "verified" and previous_write.get("invoice_id"):
+                    existing_invoice_id = previous_write["invoice_id"]
+                else:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "code": "billing_reference_already_written",
+                            "message": "An earlier write needs reconciliation before another draft can be created.",
+                            "existing_proposal_id": previous_write["proposal_id"],
+                            "invoice_id": previous_write.get("invoice_id"),
+                        },
+                    )
             decision = proposal.get("decision") or {}
             selected_data = decision.get("selected")
             if not isinstance(selected_data, dict):
@@ -421,11 +461,26 @@ def create_app(
 
             proposal["status"] = "creating"
             proposal["updated_at"] = _now()
-            state.event(body.proposal_id, "invoice_creating", "Creating an Airwallex sandbox draft.")
+            state.event(
+                body.proposal_id,
+                "invoice_reconciling" if existing_invoice_id else "invoice_creating",
+                "Verifying the existing Airwallex sandbox draft."
+                if existing_invoice_id else "Creating an Airwallex sandbox draft.",
+            )
+
+            async def execute_invoice() -> dict[str, Any]:
+                if existing_invoice_id:
+                    return await state.airwallex.verify_existing_invoice(
+                        state.requests[body.proposal_id], selected, existing_invoice_id
+                    )
+                return await state.airwallex.create_verified_invoice(
+                    state.requests[body.proposal_id], selected
+                )
+
             trace = None
             if trace_scope is not None and state.config.get("telemetry_enabled"):
                 trace = trace_scope(
-                    "create-verified-invoice",
+                    "verify-existing-invoice" if existing_invoice_id else "create-verified-invoice",
                     {"proposal_id": body.proposal_id, "request_id": body.proposal_id},
                     metadata={
                         "request_id": body.proposal_id,
@@ -436,17 +491,15 @@ def create_app(
                 )
             try:
                 if trace is None:
-                    result = await state.airwallex.create_verified_invoice(
-                        state.requests[body.proposal_id], selected
-                    )
+                    result = await execute_invoice()
                 else:
                     with trace as parent:
                         with trace_scope(
-                            "run-airwallex-invoice-workflow", {"proposal_id": body.proposal_id}
+                            "read-existing-airwallex-invoice" if existing_invoice_id
+                            else "run-airwallex-invoice-workflow",
+                            {"proposal_id": body.proposal_id},
                         ) as create_span:
-                            result = await state.airwallex.create_verified_invoice(
-                                state.requests[body.proposal_id], selected
-                            )
+                            result = await execute_invoice()
                             create_span.set_output(result)
                         with trace_scope(
                             "summarize-airwallex-readback", {"proposal_id": body.proposal_id}
@@ -475,10 +528,10 @@ def create_app(
                 }
 
             proposal["invoice"] = result
-            if result.get("verified") is True or result.get("invoice_id") or result.get("status") in {
+            if not existing_invoice_id and (result.get("verified") is True or result.get("invoice_id") or result.get("status") in {
                 "unknown",
                 "partial",
-            }:
+            }):
                 state.billing_writes[billing_reference] = {
                     "proposal_id": body.proposal_id,
                     "invoice_id": result.get("invoice_id"),
@@ -487,10 +540,13 @@ def create_app(
             proposal["status"] = "completed" if result.get("verified") is True else "failed"
             proposal["error"] = result.get("error")
             proposal["updated_at"] = _now()
+            reused = result.get("verified") is True and result.get("reused_existing") is True
             state.event(
                 body.proposal_id,
+                "invoice_reused" if reused else
                 "invoice_verified" if result.get("verified") is True else "invoice_failed",
-                "Sandbox draft readback matches the approved invoice."
+                "Existing sandbox draft matches the approved invoice; no new invoice was created."
+                if reused else "Sandbox draft readback matches the approved invoice."
                 if result.get("verified") is True
                 else "Sandbox draft was not fully verified.",
             )

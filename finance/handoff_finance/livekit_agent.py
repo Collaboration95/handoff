@@ -28,10 +28,42 @@ DEFAULT_API_URL = "http://127.0.0.1:8000"
 DEFAULT_ROOM_NAME = "handoff-finance"
 DEFAULT_MODEL = "gpt-live-1"
 _PROPOSAL_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+_CONFLICT_MESSAGES = {
+    "proposal_not_current": "Use the current proposal shown in the activity page.",
+    "proposal_in_progress": "Wait for the current proposal to finish processing.",
+    "approved_verified_proposal_required": "Review and approve the verified proposal in the activity page first.",
+    "billing_reference_already_written": (
+        "A draft creation is already recorded for this billing reference. "
+        "Check the existing proposal's status before continuing."
+    ),
+    "verified_selection_required": "The proposal needs a verified invoice selection before creation.",
+    "stored_selection_invalid": "The stored invoice selection needs review in the activity page.",
+    "server_revalidation_failed": "The invoice selection failed revalidation and needs human review.",
+}
 
 
 class FinanceAPIError(RuntimeError):
     pass
+
+
+class _FinanceAPITimeout(FinanceAPIError):
+    pass
+
+
+def _conflict_message(detail: Any) -> str | None:
+    code = detail.get("code") if isinstance(detail, dict) else detail
+    if not isinstance(code, str) or code not in _CONFLICT_MESSAGES:
+        return None
+    message = f"{code}: {_CONFLICT_MESSAGES[code]}"
+    if code == "billing_reference_already_written" and isinstance(detail, dict):
+        for field, label in (
+            ("existing_proposal_id", "Existing proposal"),
+            ("invoice_id", "Invoice ID"),
+        ):
+            value = detail.get(field)
+            if isinstance(value, str) and _PROPOSAL_ID.fullmatch(value):
+                message += f" {label}: {value}."
+    return message
 
 
 def validate_finance_api_url(value: str) -> str:
@@ -65,16 +97,24 @@ class FinanceAPI:
         *,
         transport: Transport | None = None,
         timeout_seconds: float = 3.0,
+        create_timeout_seconds: float = 120.0,
         fault_injection: bool = False,
     ) -> None:
         self.base_url = validate_finance_api_url(base_url)
         self._transport = transport
         self._timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        # Creation awaits five sequential CLI operations, each allowing 20 seconds.
+        self._create_timeout = aiohttp.ClientTimeout(total=create_timeout_seconds)
         self._fault_injection = fault_injection
         self._session: aiohttp.ClientSession | None = None
 
     async def _request(
-        self, method: str, path: str, payload: dict[str, Any] | None = None
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        timeout: aiohttp.ClientTimeout | None = None,
     ) -> dict[str, Any]:
         try:
             if self._transport is not None:
@@ -83,14 +123,24 @@ class FinanceAPI:
                 if self._session is None:
                     self._session = aiohttp.ClientSession(timeout=self._timeout)
                 async with self._session.request(
-                    method, f"{self.base_url}{path}", json=payload
+                    method, f"{self.base_url}{path}", json=payload, timeout=timeout or self._timeout
                 ) as response:
                     if response.status >= 400:
-                        raise FinanceAPIError(f"finance backend returned HTTP {response.status}")
+                        message = f"finance backend returned HTTP {response.status}"
+                        if response.status == 409:
+                            with contextlib.suppress(aiohttp.ClientError, ValueError):
+                                body = await response.json(content_type=None)
+                                detail = body.get("detail") if isinstance(body, dict) else None
+                                safe_message = _conflict_message(detail)
+                                if safe_message:
+                                    message += f": {safe_message}"
+                        raise FinanceAPIError(message)
                     result = await response.json(content_type=None)
         except FinanceAPIError:
             raise
-        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError):
+        except asyncio.TimeoutError:
+            raise _FinanceAPITimeout("finance backend request timed out") from None
+        except (aiohttp.ClientError, RuntimeError, ValueError):
             raise FinanceAPIError("finance backend unavailable") from None
         if not isinstance(result, dict):
             raise FinanceAPIError("finance backend returned an invalid response")
@@ -113,11 +163,28 @@ class FinanceAPI:
         proposal_id = _validate_proposal_id(proposal_id)
         return await self._request("GET", f"/v1/proposals/{proposal_id}")
 
+    async def simulate_invoice_autofix(self) -> dict[str, Any]:
+        return await self._request("POST", "/v1/demo/autofix")
+
     async def create_approved_invoice(self, proposal_id: str) -> dict[str, Any]:
         proposal_id = _validate_proposal_id(proposal_id)
-        return await self._request(
-            "POST", "/v1/invoices/create", {"proposal_id": proposal_id}
-        )
+        try:
+            return await self._request(
+                "POST",
+                "/v1/invoices/create",
+                {"proposal_id": proposal_id},
+                timeout=self._create_timeout,
+            )
+        except _FinanceAPITimeout:
+            # A timed-out response does not establish whether the external write finished.
+            # Reconcile through a read; never repeat an ambiguous creation request.
+            try:
+                return await self.get_invoice_status(proposal_id)
+            except FinanceAPIError:
+                raise FinanceAPIError(
+                    "Draft creation response timed out and its outcome could not be checked. "
+                    "Check the activity page before trying again."
+                ) from None
 
     async def voice_status(
         self,
@@ -337,6 +404,33 @@ class HumanAudioMixer:
         await self.mixer.aclose()
 
 
+def _repair_summary(proposal: Mapping[str, Any]) -> dict[str, Any] | None:
+    decision = proposal.get("decision")
+    if not isinstance(decision, Mapping):
+        return None
+
+    def fields(draft: Any) -> dict[str, Any] | None:
+        if not isinstance(draft, Mapping):
+            return None
+        return {key: draft.get(key) for key in ("quantity", "unit_price_minor", "currency")}
+
+    gate = decision.get("baseline_checks")
+    checks = gate.get("checks", []) if isinstance(gate, Mapping) else []
+    selected = fields(decision.get("selected"))
+    return {
+        "status": decision.get("status"),
+        "autofixed": decision.get("status") == "repaired" and selected is not None,
+        "baseline": fields(decision.get("baseline")),
+        "selected": selected,
+        "failed_checks": [
+            check["rule"] for check in checks
+            if isinstance(check, Mapping)
+            and check.get("passed") is False
+            and isinstance(check.get("rule"), str)
+        ],
+    }
+
+
 def _safe_proposal(proposal: Mapping[str, Any]) -> dict[str, Any]:
     invoice = proposal.get("invoice")
     safe_invoice = None
@@ -346,12 +440,14 @@ def _safe_proposal(proposal: Mapping[str, Any]) -> dict[str, Any]:
             "state": invoice.get("state") or invoice.get("status"),
             "stage": invoice.get("stage"),
             "verified": invoice.get("verified") is True,
+            "reused_existing": invoice.get("reused_existing") is True,
         }
     return {
         "id": proposal.get("id"),
         "status": proposal.get("status"),
         "objective": proposal.get("objective"),
         "approved": proposal.get("approved") is True,
+        "repair": _repair_summary(proposal),
         "invoice": safe_invoice,
         "error": proposal.get("error"),
     }
@@ -367,10 +463,12 @@ class ProposalAnnouncer:
             return None
         invoice = proposal.get("invoice")
         verified = isinstance(invoice, Mapping) and invoice.get("verified") is True
+        reused = isinstance(invoice, Mapping) and invoice.get("reused_existing") is True
         key = (
             proposal.get("status"),
             proposal.get("approved") is True,
             verified,
+            reused,
             proposal.get("error"),
         )
         if self._last.get(proposal_id) == key:
@@ -380,6 +478,28 @@ class ProposalAnnouncer:
         if status == "ready":
             if proposal.get("approved") is True:
                 return "The invoice workflow is approved. The sandbox draft may now be created."
+            repair = _repair_summary(proposal)
+            if repair and repair["autofixed"]:
+                baseline, selected = repair["baseline"], repair["selected"]
+                changes = []
+                if baseline and selected:
+                    if baseline["quantity"] != selected["quantity"]:
+                        changes.append(
+                            f"quantity from {baseline['quantity']} to {selected['quantity']}"
+                        )
+                    if (baseline["unit_price_minor"], baseline["currency"]) != (
+                        selected["unit_price_minor"], selected["currency"]
+                    ):
+                        def price(draft: Mapping[str, Any]) -> str:
+                            major, minor = divmod(draft["unit_price_minor"], 100)
+                            return f"{draft['currency']} {major}.{minor:02d}"
+                        changes.append(f"unit price from {price(baseline)} to {price(selected)}")
+                detail = ": " + "; ".join(changes) if changes else ""
+                return (
+                    f"The proposal was autofixed{detail}. No invoice has been created or sent. "
+                    "Review the correction in the activity page and approve the invoice "
+                    "workflow there before creating a sandbox draft."
+                )
             return (
                 "The proposal is ready. Review it in the activity page and approve the "
                 "invoice workflow there."
@@ -390,6 +510,8 @@ class ProposalAnnouncer:
             return "The approved sandbox draft is being created and checked."
         if status == "completed":
             if verified:
+                if reused:
+                    return "Existing sandbox draft verified; no new invoice was created."
                 return "The sandbox draft invoice was created and verified by readback."
             return (
                 "Invoice creation returned without verified readback, so it is not "
@@ -445,6 +567,16 @@ class InvoiceAssistant(Agent):
                 "The product promise is: Financial actions, verified. Respond when people address "
                 "you as Handoff. "
                 "Help the room describe an invoice objective for the September showcase case. "
+                "When asked to simulate or demonstrate autofixing an invoice, call "
+                "simulate_invoice_autofix. That tool uses a fixed synthetic September case, "
+                "injects a stale proposal, and runs the repair without creating or sending an "
+                "invoice. The injected mistake is a test input; the business objective is a "
+                "correct draft. Do not rewrite a simulation request as an objective requiring "
+                "an incorrect result. If someone explicitly asks to keep incorrect information "
+                "or not repair it, do not override that request with the autofix tool. "
+                "A checking response means repair is still running; use get_invoice_status "
+                "for the actual result. Only say autofixed when repair.autofixed is true, and "
+                "describe corrections using the returned baseline and selected fields. "
                 "Keep replies short. Use propose_invoice to create a backend proposal, then tell "
                 "people to review and approve the workflow in the activity page. A spoken approval "
                 "does not authorize anything because mixed audio has no speaker identity. You may "
@@ -470,6 +602,13 @@ class InvoiceAssistant(Agent):
         return json.dumps(_safe_proposal(proposal), separators=(",", ":"))
 
     @llm.function_tool
+    async def simulate_invoice_autofix(self, context: RunContext) -> str:
+        """Demonstrate repair of a fixed synthetic stale invoice proposal; create or send nothing."""
+        proposal = await self.api.simulate_invoice_autofix()
+        self._watch(proposal)
+        return json.dumps(_safe_proposal(proposal), separators=(",", ":"))
+
+    @llm.function_tool
     async def get_invoice_status(self, context: RunContext, proposal_id: str) -> str:
         """Read the authoritative status of an existing invoice proposal."""
         proposal = await self.api.get_invoice_status(proposal_id)
@@ -479,7 +618,12 @@ class InvoiceAssistant(Agent):
     @llm.function_tool
     async def create_approved_invoice(self, context: RunContext, proposal_id: str) -> str:
         """Create a sandbox draft after backend approval and validation."""
-        proposal = await self.api.create_approved_invoice(proposal_id)
+        try:
+            proposal = await self.api.create_approved_invoice(proposal_id)
+        except FinanceAPIError as exc:
+            # LiveKit intentionally hides ordinary exceptions from the model.
+            # FinanceAPIError contains only the safe messages built at our HTTP boundary.
+            raise llm.ToolError(str(exc)) from None
         self._watch(proposal)
         return json.dumps(_safe_proposal(proposal), separators=(",", ":"))
 
@@ -687,6 +831,35 @@ async def run_direct_room(config: RuntimeConfig) -> None:
         await api.aclose()
 
 
+async def run_voice_bridge(config: RuntimeConfig) -> None:
+    """Keep the participant available across room and model transport failures."""
+    api = FinanceAPI(config.finance_api_url)
+    retry_delay = 1.0
+    try:
+        while True:
+            try:
+                await run_direct_room(config)
+            except Exception:
+                # Never print transport exceptions: they can contain connection secrets.
+                reason = "Voice connection interrupted."
+            else:
+                reason = "Voice connection closed."
+            message = f"{reason} Reconnecting in {retry_delay:g} seconds."
+            print(message, flush=True)
+            with contextlib.suppress(FinanceAPIError):
+                await api.voice_status(
+                    connected=False,
+                    room_name=config.room_name,
+                    human_microphones=0,
+                    model=config.model,
+                    error=message,
+                )
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 30.0)
+    finally:
+        await api.aclose()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Join a LiveKit room as the Handoff GPT-Live finance participant."
@@ -715,7 +888,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_config:
         print("voice configuration is present")
         return 0
-    asyncio.run(run_direct_room(config))
+    try:
+        asyncio.run(run_voice_bridge(config))
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        return 130
     return 0
 
 

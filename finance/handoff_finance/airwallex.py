@@ -278,6 +278,72 @@ class AirwallexClient:
             "result": dict(result),
         }
 
+    async def verify_existing_invoice(
+        self, request: InvoiceRequest, draft: InvoiceDraft, invoice_id: str
+    ) -> dict[str, Any]:
+        """Read back a known invoice for reconciliation without creating or changing it."""
+        gate = validate_invoice(request, draft)
+        if not gate.valid:
+            return _result(
+                "rejected",
+                "validation",
+                checks={check.rule: check.passed for check in gate.checks},
+                error="core_validation_failed",
+            )
+        try:
+            invoice_id = _safe_id(invoice_id)
+        except AirwallexError as exc:
+            return _result("rejected", "validation", error=exc.code)
+
+        try:
+            ready = await self.readiness()
+            if not ready["ready"]:
+                return _result(
+                    "blocked", "readiness", invoice_id=invoice_id, error=ready["error"]
+                )
+            invoice = await self._call("invoices", "get", invoice_id)
+            line_page = await self._call("invoices", "line-items", "list", invoice_id)
+        except asyncio.TimeoutError:
+            return _result("partial", "verification_failed", invoice_id=invoice_id, error="timeout")
+        except AirwallexError as exc:
+            return _result("partial", "verification_failed", invoice_id=invoice_id, error=exc.code)
+        except OSError:
+            return _result(
+                "blocked", "verification_failed", invoice_id=invoice_id, error="cli_unavailable"
+            )
+
+        checks = self._verification_checks(invoice, line_page, request, draft, gate.total_minor)
+        invoice = invoice if isinstance(invoice, dict) else {}
+        metadata = invoice.get("metadata") if isinstance(invoice.get("metadata"), dict) else {}
+        checks.update(
+            {
+                "invoice_id": invoice.get("id") == invoice_id,
+                "billing_reference": metadata.get("handoff_reference") == request.billing_reference,
+                "invoice_source_ids": metadata.get("contract_id") == draft.contract_id
+                and metadata.get("fulfilment_id") == draft.fulfilment_id,
+            }
+        )
+        verified = all(checks.values())
+        candidate_url = invoice.get("hosted_invoice_url") or invoice.get("invoice_url")
+        hosted_url = (
+            candidate_url
+            if verified and isinstance(candidate_url, str) and candidate_url.startswith("https://")
+            else None
+        )
+        result = _result(
+            "existing" if verified else "partial",
+            "verified" if verified else "verification_failed",
+            invoice_id=invoice_id,
+            state=invoice.get("status") if "status" in invoice else invoice.get("state"),
+            verified=verified,
+            checks=checks,
+            error=None if verified else "readback_mismatch",
+            hosted_url=hosted_url,
+        )
+        if verified:
+            result["reused_existing"] = True
+        return result
+
     async def create_verified_invoice(
         self, request: InvoiceRequest, draft: InvoiceDraft
     ) -> dict[str, Any]:
@@ -644,6 +710,12 @@ def _client() -> AirwallexClient:
 
 async def create_verified_invoice(request: InvoiceRequest, draft: InvoiceDraft) -> dict[str, Any]:
     return await _client().create_verified_invoice(request, draft)
+
+
+async def verify_existing_invoice(
+    request: InvoiceRequest, draft: InvoiceDraft, invoice_id: str
+) -> dict[str, Any]:
+    return await _client().verify_existing_invoice(request, draft, invoice_id)
 
 
 async def ensure_demo_objects() -> dict[str, str]:

@@ -79,6 +79,7 @@
     .state.success .dot { background: var(--success); }
     .state.danger .dot { background: var(--danger); }
     .notice { background: var(--wash); border-left: 3px solid var(--blue); padding: 10px 12px; margin: 14px 0; color: #353b68; }
+    .notice.error { background: #fff1ef; border-color: var(--danger); color: var(--danger); overflow-wrap: anywhere; }
     .actions { display: grid; gap: 10px; margin-top: 18px; }
     button { border: 1px solid var(--rule); border-radius: 5px; padding: 9px 14px; background: white; color: var(--ink); cursor: pointer; font-weight: 680; }
     button.primary { background: var(--blue); border-color: var(--blue); color: white; }
@@ -161,8 +162,9 @@
           <div class="panel-head"><div><h2 id="comparison-title">Invoice comparison</h2><div class="muted">Original proposal and selected invoice</div></div><span class="badge" id="mode-badge">Live model baseline</span></div>
           <div class="comparison">
             <article class="draft"><h3>Original</h3><div class="muted small" id="baseline-label">Waiting for approval</div><div class="facts" id="baseline-facts"></div></article>
-            <article class="draft"><h3>Selected</h3><div class="muted small" id="selected-label">No verified invoice yet</div><div class="facts" id="selected-facts"></div></article>
+            <article class="draft"><h3>Verified proposal</h3><div class="muted small" id="selected-label">No verified invoice yet</div><div class="facts" id="selected-facts"></div></article>
           </div>
+          <div class="panel-body" id="correction-summary" role="status" hidden></div>
         </section>
 
         <section class="panel" aria-labelledby="checks-title">
@@ -188,11 +190,14 @@
             <div class="eyebrow">Current action</div><h2 id="action-title" class="objective">Create the invoice for accepted September implementation work.</h2>
             <div class="state" id="proposal-state"><span class="dot"></span><span>Preparing proposal</span></div>
             <div class="notice" id="authorization-copy">Approval authorizes a sandbox draft only after all checks pass.</div>
+            <div class="notice error" id="action-error" role="alert" hidden></div>
             <div class="controls">
               <label>Evidence case<select id="case-select"></select></label>
               <label class="switch"><input type="checkbox" id="fault-toggle">Injected stale draft</label>
             </div>
             <div class="actions">
+              <button class="primary" id="simulate-autofix">Simulate autofix</button>
+              <div class="muted small">Run a controlled test with synthetic invoice errors. Review the actual repair before approving a sandbox draft.</div>
               <button class="primary" id="approve">Approve invoice workflow</button>
               <button class="primary" id="create" disabled>Create sandbox draft</button>
               <button class="danger" id="cancel">Cancel proposal</button>
@@ -209,7 +214,7 @@
   </main>
   <script>
     const $ = (id) => document.getElementById(id);
-    const state = { proposal: null, health: null, busy: false, activityIds: new Set() };
+    const state = { proposal: null, health: null, busy: false, actionError: null, activityIds: new Set() };
     const objective = "Create the invoice for accepted September implementation work.";
 
     function money(minor, currency = "SGD") {
@@ -224,7 +229,20 @@
     async function request(path, options = {}) {
       const response = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+      if (!response.ok) {
+        const detail = data.detail;
+        if (typeof detail?.message === "string") {
+          const invoice = typeof detail.invoice_id === "string" && !detail.message.includes(detail.invoice_id)
+            ? ` Existing draft: ${detail.invoice_id}.` : "";
+          throw new Error(`${detail.message}${invoice}`);
+        }
+        if (detail?.code === "billing_reference_already_written") {
+          const invoice = detail.invoice_id ? ` Existing draft: ${detail.invoice_id}.` : "";
+          const proposal = detail.existing_proposal_id ? ` Review the existing proposal ${detail.existing_proposal_id}.` : "";
+          throw new Error(`A draft creation already exists for this billing reference.${invoice}${proposal} No duplicate was created.`);
+        }
+        throw new Error(typeof detail === "string" ? detail : `Request failed (${response.status})`);
+      }
       return data;
     }
     function setBusy(value, message = "") {
@@ -271,6 +289,7 @@
     }
     function renderProposal() {
       const p = state.proposal; if (!p) return;
+      if (state.actionError && (state.actionError.proposalId !== p.id || ["completed", "cancelled"].includes(p.status))) state.actionError = null;
       $("action-title").textContent = p.objective;
       $("mode-badge").textContent = p.fault_injection ? "Injected stale draft · controlled test" : "Live model baseline";
       $("fault-toggle").checked = p.fault_injection;
@@ -293,14 +312,46 @@
         ? "Injected stale draft · controlled test"
         : decision?.baseline ? "Actual upstream baseline" : "Generated only after approval";
       $("selected-label").textContent = decision?.selected ? (decision.status === "repaired" ? "Repaired and verified" : "Verified without changes") : "No verified invoice yet";
+      renderCorrections(p);
       renderChecks(selectedGate(decision));
       renderBaselineFailures(decision);
       renderEvidence(p);
-      const labels = { pending: "Awaiting approval", checking: "Checking evidence", ready: "Ready for sandbox draft", needs_review: "Needs review", creating: "Creating sandbox draft", completed: "Draft created and readback verified", failed: "Draft not fully verified", cancelled: "Proposal cancelled" };
+      const labels = { pending: "Awaiting approval", checking: "Checking evidence", ready: "Ready for sandbox draft", needs_review: "Needs review", creating: "Creating sandbox draft", completed: p.invoice?.reused_existing ? "Existing sandbox draft verified" : "Draft created and readback verified", failed: "Draft not fully verified", cancelled: "Proposal cancelled" };
       const stateEl = $("proposal-state"); stateEl.className = `state ${p.status === "completed" || p.status === "ready" ? "success" : p.status === "failed" || p.status === "cancelled" || p.status === "needs_review" ? "danger" : ""}`;
-      stateEl.lastElementChild.textContent = labels[p.status] || p.status;
-      $("authorization-copy").textContent = p.error ? `Status detail: ${p.error}` : "Approval authorizes a sandbox draft only after all checks pass. The voice agent cannot approve this workflow.";
+      stateEl.lastElementChild.textContent = p.status === "ready" && !p.approved && decision?.status === "repaired"
+        ? "Autofix complete · awaiting approval" : labels[p.status] || p.status;
+      $("authorization-copy").textContent = p.error ? `Status detail: ${p.error}`
+        : p.status === "checking" && !p.approved ? "Checking the synthetic proposal and attempting a repair. No invoice has been created."
+        : p.status === "needs_review" ? "No supported proposal passed all checks. Review the evidence and failed checks, or start a fresh controlled test with Simulate autofix."
+        : p.status === "ready" && !p.approved ? "The verified proposal is ready for your approval. No invoice has been created or sent."
+        : p.status === "completed" && p.invoice?.reused_existing ? "An existing sandbox draft matched this approved proposal and was verified again. No duplicate invoice was created."
+        : "Approval authorizes a sandbox draft only after all checks pass. The voice agent cannot approve this workflow.";
+      renderActionError();
       renderActions();
+    }
+    function renderActionError() {
+      const error = state.actionError?.proposalId === state.proposal?.id ? state.actionError : null;
+      $("action-error").hidden = !error;
+      $("action-error").textContent = error?.message || "";
+    }
+    function renderCorrections(p) {
+      const box = $("correction-summary"); box.replaceChildren();
+      const decision = p.decision;
+      const before = decision?.baseline;
+      const after = decision?.selected;
+      box.hidden = decision?.status !== "repaired" || !before || !after;
+      if (box.hidden) return;
+      const changes = [];
+      if (before.quantity !== after.quantity) changes.push(`quantity ${before.quantity} → ${after.quantity}`);
+      if (before.unit_price_minor !== after.unit_price_minor || before.currency !== after.currency) changes.push(`unit price ${money(before.unit_price_minor, before.currency)} → ${money(after.unit_price_minor, after.currency)}`);
+      if (before.contract_id !== after.contract_id) changes.push(`contract ${before.contract_id} → ${after.contract_id}`);
+      if (before.tax_percent !== after.tax_percent) changes.push(`tax ${before.tax_percent}% → ${after.tax_percent}%`);
+      if (before.po_number !== after.po_number) changes.push(`PO ${before.po_number || "none"} → ${after.po_number || "none"}`);
+      const summary = document.createElement("strong");
+      summary.textContent = changes.length ? `Autofix: ${changes.join("; ")}.` : "A repaired proposal passed the evidence checks.";
+      const detail = document.createElement("div"); detail.className = "muted small";
+      detail.textContent = `Subtotal: ${money(before.quantity * before.unit_price_minor, before.currency)} → ${money(after.quantity * after.unit_price_minor, after.currency)}. ${p.invoice?.verified ? (p.invoice.reused_existing ? "The existing sandbox draft is verified below." : "Sandbox creation is verified below.") : "This is a verified proposal; invoice creation is a separate step."}`;
+      box.append(summary, detail);
     }
     function selectedGate(decision) {
       if (!decision) return null;
@@ -311,7 +362,7 @@
     }
     function renderChecks(gate) {
       const container = $("checks"); container.replaceChildren();
-      if (!gate) { const empty = document.createElement("div"); empty.className = "empty"; empty.textContent = "Approve the workflow to run checks."; container.append(empty); return; }
+      if (!gate) { const empty = document.createElement("div"); empty.className = "empty"; empty.textContent = state.proposal?.status === "checking" ? "Checking source evidence and repair candidates…" : "Simulate autofix or approve the workflow to run checks."; container.append(empty); return; }
       (gate.checks || []).forEach(item => {
         container.append(checkCard(item));
       });
@@ -345,6 +396,7 @@
       }
       if (invoice) {
         box.append(fact("External stage", invoice.stage || "—"), fact("Invoice ID", invoice.invoice_id || "Not returned"), fact("Readback", invoice.verified ? "Verified" : "Not verified"));
+        if (invoice.reused_existing) box.append(fact("Draft action", "Existing sandbox draft verified; no duplicate created"));
         const traceUrl = safeUrl(invoice.creation_trace_url); if (traceUrl) { const traceLink = document.createElement("a"); traceLink.className = "result-link"; traceLink.href = traceUrl; traceLink.target = "_blank"; traceLink.rel = "noopener noreferrer"; traceLink.textContent = "Open actual creation and readback trace"; box.append(traceLink); }
         else if (invoice.creation_trace_status) { const traceState = document.createElement("p"); traceState.className = "muted"; traceState.textContent = `Creation trace: ${invoice.creation_trace_status}; no hosted URL available.`; box.append(traceState); }
         const url = safeUrl(invoice.hosted_url); if (url && invoice.verified) { const link = document.createElement("a"); link.className = "result-link"; link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer"; link.textContent = "Open verified sandbox draft"; box.append(link); }
@@ -355,7 +407,8 @@
       const operationRunning = state.busy || ["checking", "creating"].includes(p?.status);
       $("case-select").disabled = operationRunning;
       $("fault-toggle").disabled = operationRunning;
-      $("approve").disabled = state.busy || !p || p.status !== "pending";
+      $("simulate-autofix").disabled = operationRunning;
+      $("approve").disabled = operationRunning || !p || p.approved || !["pending", "ready"].includes(p.status);
       $("create").disabled = state.busy || !p || p.status !== "ready" || !p.approved || !state.health?.services?.airwallex?.ready;
       $("cancel").disabled = state.busy || !p || !["pending", "ready", "needs_review"].includes(p.status);
     }
@@ -380,13 +433,33 @@
     }
     async function approve() {
       if (!state.proposal) return; setBusy(true, "Approval recorded. Checking invoice evidence.");
-      try { state.proposal = await request(`/v1/proposals/${encodeURIComponent(state.proposal.id)}/approve`, { method: "POST" }); renderProposal(); announce(state.proposal.status === "ready" ? "Checks passed. The sandbox draft may now be created." : "Checks completed. This proposal needs review."); }
+      try { state.proposal = await request(`/v1/proposals/${encodeURIComponent(state.proposal.id)}/approve`, { method: "POST" }); state.actionError = null; renderProposal(); announce(state.proposal.status === "ready" ? "Checks passed. The sandbox draft may now be created." : "Checks completed. This proposal needs review."); }
       catch (error) { announce(error.message); } finally { setBusy(false); }
+    }
+    async function simulateAutofix() {
+      setBusy(true, "Starting the synthetic autofix demonstration.");
+      try {
+        state.proposal = await request("/v1/demo/autofix", { method: "POST" });
+        renderProposal();
+        announce("The controlled autofix test has started. Results will update automatically.");
+      } catch (error) {
+        $("authorization-copy").textContent = `Autofix could not start: ${error.message}`;
+        announce(error.message);
+      } finally { setBusy(false); }
     }
     async function createInvoice() {
       if (!state.proposal) return; setBusy(true, "Creating and reading back the sandbox draft.");
-      try { state.proposal = await request("/v1/invoices/create", { method: "POST", body: JSON.stringify({ proposal_id: state.proposal.id }) }); renderProposal(); announce(state.proposal.status === "completed" ? "Sandbox draft created and readback verified." : "The sandbox draft was not fully verified."); }
-      catch (error) { announce(error.message); } finally { setBusy(false); }
+      const proposalId = state.proposal.id;
+      try {
+        state.proposal = await request("/v1/invoices/create", { method: "POST", body: JSON.stringify({ proposal_id: proposalId }) });
+        state.actionError = null;
+        renderProposal();
+        announce(state.proposal.status === "completed" ? (state.proposal.invoice?.reused_existing ? "Existing sandbox draft verified. No duplicate invoice was created." : "Sandbox draft created and readback verified.") : "The sandbox draft was not fully verified.");
+      } catch (error) {
+        state.actionError = { proposalId, message: `Sandbox draft could not be completed: ${error.message}` };
+        renderActionError();
+        announce(state.actionError.message);
+      } finally { setBusy(false); }
     }
     async function cancel() {
       if (!state.proposal) return; setBusy(true, "Cancelling proposal.");
@@ -407,6 +480,7 @@
       } catch (error) { announce(`Page setup failed: ${error.message}`); }
       window.setInterval(poll, 2000);
     }
+    $("simulate-autofix").addEventListener("click", simulateAutofix);
     $("approve").addEventListener("click", approve); $("create").addEventListener("click", createInvoice); $("cancel").addEventListener("click", cancel);
     $("case-select").addEventListener("change", createProposal); $("fault-toggle").addEventListener("change", createProposal);
     boot();

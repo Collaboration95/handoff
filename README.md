@@ -6,6 +6,7 @@ Handoff accepts a finance platform’s existing objective, improves the proposed
 - [Two-hour implementation plan](docs/superpowers/plans/2026-09-12-finance-outcomes.md)
 - [Install and run the finance API and approval page](finance/README.md)
 - [Connect the GPT-Live-1 participant and two meeting clients](finance/LIVEKIT.md)
+- [Run the React call client and simulated participants](client/HANDOFF.md)
 - [Two-minute stage script](finance/DEMO.md)
 - [Verified integrations, evaluation results, and limits](finance/VERIFICATION.md)
 

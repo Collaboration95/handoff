@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestServer
 from livekit import rtc
+from livekit.agents import llm
 
+import handoff_finance.livekit_agent as livekit_agent
 from handoff_finance.livekit_agent import (
     FinanceAPI,
     FinanceAPIError,
@@ -16,6 +22,7 @@ from handoff_finance.livekit_agent import (
     RuntimeConfig,
     _close_voice_session,
     _bind_session_health,
+    _safe_proposal,
     validate_finance_api_url,
 )
 
@@ -301,6 +308,130 @@ def proposal(status="ready", *, approved=False, verified=None):
     }
 
 
+@asynccontextmanager
+async def local_finance_api(handler, **options):
+    application = web.Application()
+    application.router.add_route("*", "/{path:.*}", handler)
+    async with TestServer(application) as server:
+        api = FinanceAPI(str(server.make_url("/")), **options)
+        try:
+            yield api
+        finally:
+            await api.aclose()
+
+
+def test_slow_draft_creation_outlives_the_status_request_timeout() -> None:
+    """Catches a successful multi-step draft write being reported as unavailable."""
+    async def exercise():
+        writes = []
+
+        async def handle(request):
+            assert request.method == "POST"
+            assert request.path == "/v1/invoices/create"
+            writes.append(await request.json())
+            await asyncio.sleep(0.15)
+            return web.json_response(proposal("completed", approved=True, verified=True))
+
+        async with local_finance_api(handle, timeout_seconds=0.05) as api:
+            result = await api.create_approved_invoice("proposal_123")
+
+        assert result["status"] == "completed"
+        assert result["invoice"]["verified"] is True
+        assert writes == [{"proposal_id": "proposal_123"}]
+
+    asyncio.run(exercise())
+
+
+def test_create_timeout_reads_status_without_repeating_the_write() -> None:
+    """Catches reporting an ambiguous write as failed or creating it a second time."""
+    transport = FakeTransport(
+        [asyncio.TimeoutError(), proposal("completed", approved=True, verified=True)]
+    )
+    api = FinanceAPI(transport=transport)
+
+    result = asyncio.run(api.create_approved_invoice("proposal_123"))
+
+    assert result["status"] == "completed"
+    assert result["invoice"]["verified"] is True
+    assert transport.calls == [
+        ("POST", "/v1/invoices/create", {"proposal_id": "proposal_123"}),
+        ("GET", "/v1/proposals/proposal_123", None),
+    ]
+
+
+@pytest.mark.parametrize("operation", ["status", "heartbeat"])
+def test_status_and_heartbeat_keep_the_short_timeout(operation) -> None:
+    """Catches draft creation's longer timeout slowing health and status checks."""
+    async def exercise():
+        async def handle(request):
+            await asyncio.sleep(0.15)
+            return web.json_response(proposal("creating", approved=True))
+
+        async with local_finance_api(handle, timeout_seconds=0.05) as api:
+            with pytest.raises(FinanceAPIError, match="timed out"):
+                if operation == "status":
+                    await api.get_invoice_status("proposal_123")
+                else:
+                    await api.voice_status(
+                        connected=True, room_name="demo", human_microphones=1,
+                        model="demo", error=None,
+                    )
+
+    asyncio.run(exercise())
+
+
+def test_create_tool_surfaces_safe_backend_error_to_the_model() -> None:
+    """Catches the LiveKit executor masking an actionable backend error as internal."""
+    message = "billing_reference_already_written: Check existing proposal proposal_prior."
+    api = FinanceAPI(transport=FakeTransport([FinanceAPIError(message)]))
+    tool = next(
+        tool for tool in InvoiceAssistant(api).tools if tool.info.name == "create_approved_invoice"
+    )
+
+    with pytest.raises(llm.ToolError) as raised:
+        asyncio.run(tool(None, "proposal_123"))
+
+    assert str(raised.value) == message
+
+
+@pytest.mark.parametrize(
+    ("detail", "expected"),
+    [
+        (
+            "approved_verified_proposal_required",
+            "approved_verified_proposal_required",
+        ),
+        (
+            {
+                "code": "billing_reference_already_written",
+                "existing_proposal_id": "proposal_prior",
+                "invoice_id": "inv_prior",
+                "private_data": "Bearer secret-token",
+            },
+            "A draft creation is already recorded for this billing reference.",
+        ),
+        ("Bearer secret-token", "finance backend returned HTTP 409"),
+    ],
+)
+def test_conflict_errors_explain_known_codes_without_echoing_arbitrary_details(detail, expected):
+    """Catches lost approval/duplicate reasons and accidental disclosure of error bodies."""
+    async def exercise():
+        async def handle(request):
+            return web.json_response({"detail": detail}, status=409)
+
+        async with local_finance_api(handle) as api:
+            with pytest.raises(FinanceAPIError) as raised:
+                await api.create_approved_invoice("proposal_123")
+        message = str(raised.value)
+        assert expected in message
+        assert "secret-token" not in message
+        if isinstance(detail, dict):
+            assert "proposal_prior" in message
+            assert "inv_prior" in message
+
+    asyncio.run(exercise())
+
+
 def test_finance_api_uses_only_locked_non_approval_routes() -> None:
     """Catches a voice tool gaining an approval/cancel route or model-chosen URL."""
     transport = FakeTransport(
@@ -331,9 +462,78 @@ def test_finance_api_uses_only_locked_non_approval_routes() -> None:
     assert all("approve" not in path and "cancel" not in path for _, path, _ in transport.calls)
     assert {tool.info.name for tool in InvoiceAssistant(api).tools} == {
         "propose_invoice",
+        "simulate_invoice_autofix",
         "get_invoice_status",
         "create_approved_invoice",
     }
+
+
+def test_autofix_simulation_has_no_objective_or_creation_arguments_and_is_watched() -> None:
+    """Simulation runs the fixed correction case without turning its fault into an objective."""
+    transport = FakeTransport([proposal("checking")])
+    api = FinanceAPI(transport=transport)
+    watched = []
+    assistant = InvoiceAssistant(api, SimpleNamespace(watch=watched.append))
+    tool = next(tool for tool in assistant.tools if tool.info.name == "simulate_invoice_autofix")
+
+    result = json.loads(asyncio.run(tool(None)))
+
+    assert transport.calls == [("POST", "/v1/demo/autofix", None)]
+    assert watched == ["proposal_123"]
+    assert result["status"] == "checking"
+    assert result["approved"] is False
+    assert result["invoice"] is None
+
+
+def repaired_proposal():
+    value = proposal()
+    value["decision"] = {
+        "status": "repaired",
+        "baseline": {"quantity": 10, "unit_price_minor": 10000, "currency": "SGD"},
+        "selected": {"quantity": 6, "unit_price_minor": 9000, "currency": "SGD"},
+        "baseline_checks": {"checks": [
+            {"rule": "quantity", "passed": False},
+            {"rule": "unit_price", "passed": False},
+            {"rule": "currency", "passed": True},
+        ]},
+        "private_evidence": "not included in the voice summary",
+    }
+    return value
+
+
+def test_voice_repair_summary_reports_only_actual_selected_correction() -> None:
+    value = repaired_proposal()
+    repair = _safe_proposal(value)["repair"]
+
+    assert repair == {
+        "status": "repaired",
+        "autofixed": True,
+        "baseline": {"quantity": 10, "unit_price_minor": 10000, "currency": "SGD"},
+        "selected": {"quantity": 6, "unit_price_minor": 9000, "currency": "SGD"},
+        "failed_checks": ["quantity", "unit_price"],
+    }
+    value["decision"]["status"] = "needs_review"
+    assert _safe_proposal(value)["repair"]["autofixed"] is False
+    value["decision"]["status"] = "repaired"
+    value["decision"]["selected"] = None
+    assert _safe_proposal(value)["repair"]["autofixed"] is False
+
+
+def test_autofix_announcement_explains_corrected_proposal_without_claiming_creation() -> None:
+    announcer = ProposalAnnouncer()
+    value = repaired_proposal()
+
+    message = announcer.message_for(value)
+
+    assert "autofixed" in message.lower()
+    assert "10 to 6" in message
+    assert "SGD 100.00 to SGD 90.00" in message
+    assert "No invoice has been created or sent" in message
+    assert "approve" in message.lower()
+    assert announcer.message_for(value) is None
+    value["decision"]["status"] = "needs_review"
+    other = ProposalAnnouncer().message_for(value)
+    assert "autofixed" not in other.lower()
 
 
 def test_operator_fault_mode_applies_to_voice_proposal_without_model_argument() -> None:
@@ -408,6 +608,21 @@ def test_status_announcements_are_once_only_and_require_verified_completion() ->
     assert verified == "The sandbox draft invoice was created and verified by readback."
 
 
+def test_reused_draft_voice_summary_does_not_claim_a_new_invoice() -> None:
+    """Catches authoritative readback/reuse being announced as a second creation."""
+    value = proposal("completed", approved=True, verified=True)
+    value["invoice"]["reused_existing"] = True
+    announcer = ProposalAnnouncer()
+
+    assert _safe_proposal(value)["invoice"]["reused_existing"] is True
+    assert announcer.message_for(value) == (
+        "Existing sandbox draft verified; no new invoice was created."
+    )
+    assert announcer.message_for(value) is None
+    value["invoice"]["verified"] = False
+    assert "not verified" in announcer.message_for(value)
+
+
 def test_direct_room_config_needs_token_but_not_server_api_secret(monkeypatch) -> None:
     """Catches accidental regression from participant mode to worker-secret credentials."""
     for name in (
@@ -427,3 +642,92 @@ def test_direct_room_config_needs_token_but_not_server_api_secret(monkeypatch) -
 
     assert config.livekit_token == "room-token"
     assert config.fault_injection is True
+
+
+def test_cli_reconnects_after_disconnect_and_error_with_capped_safe_backoff(monkeypatch, capsys):
+    """Catches a closed room terminating the bridge instead of restoring its connection."""
+    config = RuntimeConfig("wss://livekit.test", "room-secret", "openai-secret")
+    outcomes = [None, RuntimeError("Bearer secret-token"), None, None, None, None, None]
+    calls, delays, statuses, closed = [], [], [], []
+
+    async def room_attempt(value):
+        calls.append(value)
+        if not outcomes:
+            raise asyncio.CancelledError()
+        outcome = outcomes.pop(0)
+        if outcome is not None:
+            raise outcome
+
+    async def pause(delay):
+        delays.append(delay)
+
+    async def status(**payload):
+        statuses.append(payload)
+
+    async def close():
+        closed.append(True)
+
+    monkeypatch.setattr(livekit_agent, "run_direct_room", room_attempt)
+    monkeypatch.setattr(livekit_agent.asyncio, "sleep", pause)
+    monkeypatch.setattr(livekit_agent, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(RuntimeConfig, "from_env", classmethod(lambda cls: config))
+    monkeypatch.setattr(
+        livekit_agent, "FinanceAPI",
+        lambda *args, **kwargs: SimpleNamespace(voice_status=status, aclose=close),
+    )
+
+    assert livekit_agent.main([]) == 130
+    assert len(calls) == 8
+    assert delays == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0]
+    assert len(statuses) == 7
+    assert all(item["connected"] is False for item in statuses)
+    assert all(item["human_microphones"] == 0 for item in statuses)
+    assert "Reconnecting" in statuses[0]["error"]
+    assert "secret" not in json.dumps(statuses)
+    assert "secret" not in capsys.readouterr().out
+    assert closed == [True]
+
+
+def test_cli_keyboard_interrupt_does_not_retry(monkeypatch):
+    """Catches an explicit operator stop entering the reconnect loop."""
+    config = RuntimeConfig("wss://livekit.test", "room-secret", "openai-secret")
+    calls = []
+
+    async def room_attempt(value):
+        calls.append(value)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(livekit_agent, "run_direct_room", room_attempt)
+    monkeypatch.setattr(livekit_agent, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(RuntimeConfig, "from_env", classmethod(lambda cls: config))
+
+    assert livekit_agent.main([]) == 130
+    assert len(calls) == 1
+
+
+def test_check_config_exits_without_entering_room(monkeypatch, capsys):
+    """Catches configuration checks accidentally joining a room or starting retries."""
+    config = RuntimeConfig("wss://livekit.test", "room-secret", "openai-secret")
+    started = []
+    monkeypatch.setattr(livekit_agent, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(RuntimeConfig, "from_env", classmethod(lambda cls: config))
+    monkeypatch.setattr(livekit_agent, "run_voice_bridge", lambda value: started.append(value))
+
+    assert livekit_agent.main(["--check-config"]) == 0
+    assert capsys.readouterr().out == "voice configuration is present\n"
+    assert started == []
+
+
+def test_invalid_config_exits_without_retrying(monkeypatch):
+    """Catches a missing required setting becoming an endless connection retry."""
+    def invalid_config(cls):
+        raise ValueError("missing required environment variables: LIVEKIT_TOKEN")
+
+    started = []
+    monkeypatch.setattr(livekit_agent, "load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(RuntimeConfig, "from_env", classmethod(invalid_config))
+    monkeypatch.setattr(livekit_agent, "run_voice_bridge", lambda value: started.append(value))
+
+    with pytest.raises(SystemExit, match="missing required environment variables"):
+        livekit_agent.main([])
+    assert started == []
