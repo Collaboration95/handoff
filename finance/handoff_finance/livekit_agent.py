@@ -236,9 +236,14 @@ class MixedRoomInput(io.AudioInput):
     def __init__(self, mixer: rtc.AudioMixer) -> None:
         super().__init__(label="participant-room-mix")
         self._mixer = mixer
+        self._nonzero_reported = False
 
     async def __anext__(self) -> rtc.AudioFrame:
-        return await anext(self._mixer)
+        frame = await anext(self._mixer)
+        if not self._nonzero_reported and any(frame.data):
+            self._nonzero_reported = True
+            print("Voice input: first nonzero audio frame forwarded.", flush=True)
+        return frame
 
 
 def _default_stream_factory(participant: rtc.RemoteParticipant) -> rtc.AudioStream:
@@ -725,6 +730,8 @@ async def _close_voice_session(session: Any | None, model: Any | None) -> None:
 def _bind_session_health(
     session: Any, reporter: VoiceStatusReporter, stop_requested: asyncio.Event
 ) -> Callable[[], None]:
+    transcription_events = 0
+
     def fail(error: str) -> None:
         reporter.update(connected=False, error=error)
         stop_requested.set()
@@ -738,12 +745,68 @@ def _bind_session_health(
         if not stop_requested.is_set():
             fail("gpt-live session closed")
 
+    def on_agent_state_changed(event: Any) -> None:
+        state = getattr(event, "new_state", None)
+        if not isinstance(state, str) or state not in {
+            "initializing", "idle", "listening", "thinking", "speaking",
+        }:
+            state = "unknown"
+        print(f"Voice agent state: {state}.", flush=True)
+
+    def on_user_input_transcribed(event: Any) -> None:
+        nonlocal transcription_events
+        transcription_events += 1
+        print(f"Voice input: transcription event {transcription_events}.", flush=True)
+
     session.on("error", on_error)
     session.on("close", on_close)
+    session.on("agent_state_changed", on_agent_state_changed)
+    session.on("user_input_transcribed", on_user_input_transcribed)
 
     def unbind() -> None:
         session.off("error", on_error)
         session.off("close", on_close)
+        session.off("agent_state_changed", on_agent_state_changed)
+        session.off("user_input_transcribed", on_user_input_transcribed)
+
+    return unbind
+
+
+def _bind_room_health(
+    room: Any, reporter: VoiceStatusReporter, stop_requested: asyncio.Event
+) -> Callable[[], None]:
+    def on_disconnected(reason: Any) -> None:
+        code = reason if isinstance(reason, int) else rtc.DisconnectReason.UNKNOWN_REASON
+        try:
+            name = rtc.DisconnectReason.Name(code)
+        except ValueError:
+            name = "UNKNOWN_REASON"
+        message = f"LiveKit room disconnected: {name} ({code})."
+        print(message, flush=True)
+        reporter.update(connected=False, human_microphones=0, error=message)
+        stop_requested.set()
+
+    def on_reconnecting() -> None:
+        message = "LiveKit room reconnecting."
+        print(message, flush=True)
+        reporter.update(connected=False, error=message)
+
+    def on_reconnected() -> None:
+        print("LiveKit room reconnected.", flush=True)
+        if not stop_requested.is_set():
+            reporter.update(connected=True, error=None)
+
+    handlers = {
+        "disconnected": on_disconnected,
+        "reconnecting": on_reconnecting,
+        "reconnected": on_reconnected,
+    }
+    for event, handler in handlers.items():
+        room.on(event, handler)
+
+    def unbind() -> None:
+        for event, handler in handlers.items():
+            room.off(event, handler)
 
     return unbind
 
@@ -762,7 +825,7 @@ async def run_direct_room(config: RuntimeConfig) -> None:
     poll_task: asyncio.Task[None] | None = None
     stop_requested = asyncio.Event()
     unbind_session_health: Callable[[], None] | None = None
-    room.on("disconnected", lambda reason: stop_requested.set())
+    unbind_room_health = _bind_room_health(room, reporter, stop_requested)
     try:
         await room.connect(
             config.livekit_url,
@@ -812,6 +875,7 @@ async def run_direct_room(config: RuntimeConfig) -> None:
             await reporter.send()
         raise
     finally:
+        unbind_room_health()
         if unbind_session_health is not None:
             unbind_session_health()
         if poller is not None:
@@ -842,9 +906,14 @@ async def run_voice_bridge(config: RuntimeConfig) -> None:
             except Exception:
                 # Never print transport exceptions: they can contain connection secrets.
                 reason = "Voice connection interrupted."
+                delay = retry_delay
+                retry_delay = min(retry_delay * 2, 30.0)
             else:
                 reason = "Voice connection closed."
-            message = f"{reason} Reconnecting in {retry_delay:g} seconds."
+                # Agent-only rooms close normally; stay available for the next caller.
+                retry_delay = 1.0
+                delay = 1.0
+            message = f"{reason} Reconnecting in {delay:g} seconds."
             print(message, flush=True)
             with contextlib.suppress(FinanceAPIError):
                 await api.voice_status(
@@ -854,8 +923,7 @@ async def run_voice_bridge(config: RuntimeConfig) -> None:
                     model=config.model,
                     error=message,
                 )
-            await asyncio.sleep(retry_delay)
-            retry_delay = min(retry_delay * 2, 30.0)
+            await asyncio.sleep(delay)
     finally:
         await api.aclose()
 

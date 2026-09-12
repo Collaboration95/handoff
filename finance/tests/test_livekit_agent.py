@@ -261,6 +261,48 @@ def test_voice_shutdown_closes_session_then_model_owned_http_client() -> None:
     assert events == ["session", "model"]
 
 
+def test_mixed_input_reports_first_nonzero_frame_once_without_audio_data(capsys):
+    """Catches diagnostics claiming silent input is speech or altering forwarded audio."""
+    async def exercise():
+        silence = rtc.AudioFrame.create(24_000, 1, 480)
+        speech = rtc.AudioFrame.create(24_000, 1, 480)
+        speech.data[0] = 1234
+
+        async def frames():
+            for frame in (silence, speech, speech):
+                yield frame
+
+        audio = livekit_agent.MixedRoomInput(frames())
+        assert await anext(audio) is silence
+        assert capsys.readouterr().out == ""
+        assert await anext(audio) is speech
+        assert await anext(audio) is speech
+        assert capsys.readouterr().out == "Voice input: first nonzero audio frame forwarded.\n"
+
+    asyncio.run(exercise())
+
+
+def test_session_diagnostics_log_state_and_transcription_count_without_text(capsys):
+    """Catches a silent model boundary or transcript contents leaking into diagnostics."""
+    session = FakeRoom([])
+    reporter = SimpleNamespace(update=lambda **changes: None)
+    unbind = _bind_session_health(session, reporter, asyncio.Event())
+
+    session.emit("agent_state_changed", SimpleNamespace(new_state="listening"))
+    session.emit("agent_state_changed", SimpleNamespace(new_state="Bearer secret-token"))
+    session.emit("user_input_transcribed", SimpleNamespace(transcript="private conversation"))
+    session.emit("user_input_transcribed", SimpleNamespace(transcript="another private sentence"))
+
+    assert capsys.readouterr().out == (
+        "Voice agent state: listening.\n"
+        "Voice agent state: unknown.\n"
+        "Voice input: transcription event 1.\n"
+        "Voice input: transcription event 2.\n"
+    )
+    unbind()
+    assert all(not callbacks for callbacks in session.callbacks.values())
+
+
 def test_fatal_gpt_live_error_marks_heartbeat_unhealthy_and_stops_bridge() -> None:
     """Catches a dead GPT-Live session leaving the room heartbeat falsely green."""
     session = FakeRoom([])
@@ -278,6 +320,57 @@ def test_fatal_gpt_live_error_marks_heartbeat_unhealthy_and_stops_bridge() -> No
     unbind()
     assert session.callbacks["error"] == []
     assert session.callbacks["close"] == []
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        (rtc.DisconnectReason.DUPLICATE_IDENTITY, "DUPLICATE_IDENTITY (2)"),
+        (987, "UNKNOWN_REASON (987)"),
+        ("Bearer secret-token", "UNKNOWN_REASON (0)"),
+    ],
+)
+def test_room_disconnect_reports_safe_reason_and_requests_stop(reason, expected, capsys):
+    """Catches losing the actual disconnect cause or leaking unexpected callback text."""
+    room = FakeRoom([])
+    updates = []
+    reporter = SimpleNamespace(update=lambda **changes: updates.append(changes))
+    stop = asyncio.Event()
+    unbind = livekit_agent._bind_room_health(room, reporter, stop)
+
+    room.emit("disconnected", reason)
+
+    assert stop.is_set()
+    assert updates == [{
+        "connected": False,
+        "human_microphones": 0,
+        "error": f"LiveKit room disconnected: {expected}.",
+    }]
+    output = capsys.readouterr().out
+    assert expected in output
+    assert "secret-token" not in output
+    unbind()
+    assert all(not callbacks for callbacks in room.callbacks.values())
+
+
+def test_transient_room_reconnect_updates_health_without_stopping_bridge(capsys):
+    """Catches transient RTC recovery leaving a stale healthy/disconnected heartbeat."""
+    room = FakeRoom([])
+    updates = []
+    reporter = SimpleNamespace(update=lambda **changes: updates.append(changes))
+    stop = asyncio.Event()
+    unbind = livekit_agent._bind_room_health(room, reporter, stop)
+
+    room.emit("reconnecting")
+    room.emit("reconnected")
+
+    assert not stop.is_set()
+    assert updates == [
+        {"connected": False, "error": "LiveKit room reconnecting."},
+        {"connected": True, "error": None},
+    ]
+    assert "LiveKit room reconnected." in capsys.readouterr().out
+    unbind()
 
 
 class FakeTransport:
@@ -644,10 +737,22 @@ def test_direct_room_config_needs_token_but_not_server_api_secret(monkeypatch) -
     assert config.fault_injection is True
 
 
-def test_cli_reconnects_after_disconnect_and_error_with_capped_safe_backoff(monkeypatch, capsys):
-    """Catches a closed room terminating the bridge instead of restoring its connection."""
+@pytest.mark.parametrize(
+    ("outcomes", "expected_delays"),
+    [
+        (
+            ["closed", "closed", "error", "error", "closed", "error", "closed"],
+            [1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0],
+        ),
+        (["error"] * 7, [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0]),
+    ],
+)
+def test_cli_reconnects_after_disconnect_and_error_with_capped_safe_backoff(
+    monkeypatch, capsys, outcomes, expected_delays
+):
+    """Catches idle room closure creating long join gaps, or failure retries spinning."""
     config = RuntimeConfig("wss://livekit.test", "room-secret", "openai-secret")
-    outcomes = [None, RuntimeError("Bearer secret-token"), None, None, None, None, None]
+    outcomes = list(outcomes)
     calls, delays, statuses, closed = [], [], [], []
 
     async def room_attempt(value):
@@ -655,8 +760,8 @@ def test_cli_reconnects_after_disconnect_and_error_with_capped_safe_backoff(monk
         if not outcomes:
             raise asyncio.CancelledError()
         outcome = outcomes.pop(0)
-        if outcome is not None:
-            raise outcome
+        if outcome == "error":
+            raise RuntimeError("Bearer secret-token")
 
     async def pause(delay):
         delays.append(delay)
@@ -678,7 +783,7 @@ def test_cli_reconnects_after_disconnect_and_error_with_capped_safe_backoff(monk
 
     assert livekit_agent.main([]) == 130
     assert len(calls) == 8
-    assert delays == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0]
+    assert delays == expected_delays
     assert len(statuses) == 7
     assert all(item["connected"] is False for item in statuses)
     assert all(item["human_microphones"] == 0 for item in statuses)
