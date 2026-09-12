@@ -1,0 +1,309 @@
+RELAY — ARCHITECTURE DECISION / MINIMUM-PATH IMPLEMENTATION
+
+GOAL
+Build a convincing hackathon demo without spending time on generic infrastructure.
+
+CORE PRINCIPLE
+Do not build video calling, WebRTC, audio transport, recording, or realtime media plumbing yourself.
+Use existing infrastructure for all commodity pieces.
+Spend custom development time only on:
+- meeting context understanding
+- tool invocation
+- GitHub actions
+- Slack actions
+- action visibility / approval
+
+RECOMMENDED STACK
+
+1. VIDEO / MEETING LAYER
+Use LiveKit Meet.
+
+Why:
+- Open-source
+- Ready-made multi-user video/audio room
+- Handles microphone, camera, participants, screen sharing, WebRTC, and room management
+- Can be forked and minimally rebranded
+- Avoids writing a custom video-call frontend
+
+Recommendation:
+Fork the LiveKit Meet example and use it as the meeting UI.
+Only customize:
+- product name / branding
+- small Relay status area
+- Agent Activity panel
+
+DO NOT IMPLEMENT:
+- WebRTC negotiation
+- microphone streaming logic
+- video layout system
+- participant media handling
+- meeting recording
+
+2. REALTIME AGENT / VOICE
+Use LiveKit Agents with OpenAI GPT-Live.
+
+Architecture:
+Human participants
+    ↓
+LiveKit Room
+    ↓
+Relay joins as an agent participant
+    ↓
+GPT-Live handles realtime conversation
+    ↓
+Relay publishes spoken responses back into the room
+
+Why:
+- Agent can join the same room as a normal participant
+- LiveKit handles sending room audio to the agent
+- LiveKit handles returning agent audio to participants
+- Realtime interruption / conversational behavior is already supported
+- No custom audio socket or TTS pipeline is required
+
+DO NOT IMPLEMENT:
+- custom speech-to-text pipeline
+- custom text-to-speech pipeline
+- raw audio buffering
+- custom WebSocket transport for audio
+- interruption handling from scratch
+
+3. AGENT ↔ FRONTEND COMMUNICATION
+Use LiveKit's existing room/data messaging for small app events.
+
+Purpose:
+Show judge-visible actions in the meeting UI.
+
+Example event:
+{
+  "type": "action_completed",
+  "service": "github",
+  "action": "assigned_issue",
+  "target": "#12",
+  "person": "Guru"
+}
+
+Frontend displays:
+✓ GitHub #12 assigned → Guru
+
+This activity feed is worth building because judges cannot see backend tool calls.
+
+4. GITHUB MODULE
+This is custom product logic.
+
+Implement only thin API wrappers:
+
+- get_github_item(issue_or_pr)
+- assign_github_issue(issue, person)
+- request_pr_review(pr, person)
+
+Optional only if ahead of schedule:
+- create_github_issue(repo, title, description)
+
+Use a dedicated demo repository with predictable:
+- issue numbers
+- PR numbers
+- users
+- labels / descriptions
+
+Keep GitHub integration simple and reliable.
+
+5. SLACK MODULE
+Slack is an ACTION DESTINATION, not an input surface.
+
+Implement only:
+- send_slack_message(channel, text)
+- send_slack_dm(user, text)
+
+Do NOT implement:
+- Slack event subscriptions
+- app mentions
+- slash commands
+- Socket Mode
+- incoming Slack conversations
+- complex OAuth
+- multiple workspaces
+
+Use a free Slack workspace.
+One user account is sufficient for the demo.
+Relay can DM the same user or post into #engineering.
+
+If another person is available, optionally add them later.
+
+6. PEOPLE / IDENTITY MAPPING
+Do not build a contacts system or database.
+
+Use hardcoded configuration:
+
+PEOPLE = {
+    "Guru": {
+        "github": "<github_username>",
+        "slack": "<slack_user_id>"
+    },
+    "Alex": {
+        "github": "<github_username>",
+        "slack": "<slack_user_id>"
+    }
+}
+
+This is enough for a hackathon demo.
+
+7. RECORDING
+Do NOT implement meeting recording.
+
+For submission:
+- use macOS screen recording, OBS, or another external screen recorder
+
+The demo recording should capture:
+- meeting UI
+- Relay speaking
+- Agent Activity panel
+- GitHub changes
+- Slack notifications/messages
+
+Built-in recording is unnecessary for the MVP.
+
+SYSTEM SHAPE
+
+Human A ─┐
+Human B ─┼── LiveKit Room ─── Relay Agent
+Mic/Video┘                         │
+                                  ↓
+                              GPT-Live
+                                  │
+                         tool/function calls
+                                  │
+                      ┌───────────┴───────────┐
+                      ↓                       ↓
+                   GitHub                   Slack
+                      │                       │
+                      └───────────┬───────────┘
+                                  ↓
+                         spoken confirmation
+                         + activity feed
+
+CUSTOM CODE SHOULD LIVE ROUGHLY HERE
+
+relay/
+
+frontend/
+    LiveKit Meet fork
+    ActivityPanel.tsx
+
+agent/
+    agent.py
+    tools/
+        github.py
+        slack.py
+        contacts.py
+
+.env
+README.md
+
+WHAT RELAY ITSELF SHOULD BE RESPONSIBLE FOR
+
+1. CONTEXT
+Understand references from the meeting:
+- "that issue"
+- "the fix"
+- "him"
+- "what we decided"
+
+2. INTENT
+Map natural speech to structured tool calls.
+
+Example:
+"Get Alex to look at the fix."
+
+Context:
+current object = PR #18
+Alex.github = alex123
+
+Action:
+request_pr_review(18, "alex123")
+
+3. CROSS-SYSTEM ACTIONS
+Example:
+"Get Alex to review it and let him know on Slack."
+
+Actions:
+- request GitHub review
+- send Slack DM with useful context
+
+4. REALTIME CORRECTION / INTERRUPTION
+Example:
+"Actually, not Alex — Sarah."
+
+The agent should adjust the pending action before execution.
+
+5. SAFETY / APPROVAL
+For meaningful write actions, optionally require confirmation.
+
+Example:
+Relay:
+"I'm ready to assign #12 to Sarah and request her review. Go ahead?"
+
+User:
+"Yes."
+
+Then execute.
+
+WHAT NOT TO BUILD
+
+- Zoom integration
+- Google Meet integration
+- Teams integration
+- custom video calling
+- custom WebRTC
+- custom audio streaming
+- meeting recording
+- custom STT / TTS
+- databases
+- vector stores
+- long-term memory
+- multiple Slack workspaces
+- Slack incoming events
+- OAuth-heavy integrations
+- Jira
+- Linear
+- calendar integration
+- multi-agent architecture
+- sophisticated identity management
+
+WHY LIVEKIT OVER JITSI
+Jitsi is very easy for embedding a video call, but Relay would still need custom work to:
+- access participant audio cleanly
+- stream audio to the AI
+- inject AI audio back into the meeting
+
+LiveKit already supports the AI agent as a room participant.
+Therefore the architecture is simpler:
+
+LiveKit Room
+    ↓
+LiveKit Agent
+    ↓
+GPT-Live
+
+rather than:
+
+Jitsi
+    ↓
+custom audio bridge
+    ↓
+OpenAI
+
+FINAL IMPLEMENTATION DIRECTIVE
+
+Fork LiveKit Meet.
+Do not implement video conferencing.
+Run Relay as a LiveKit Agent participant using GPT-Live.
+Keep Slack output-only.
+Use thin GitHub and Slack tool wrappers.
+Use hardcoded user mappings.
+Do not implement recording.
+Add a small Agent Activity panel so every action is visible.
+
+The project's value should come from:
+conversation context → intent understanding → real action → confirmation
+
+NOT from infrastructure.
