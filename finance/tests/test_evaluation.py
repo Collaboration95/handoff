@@ -4,8 +4,10 @@ import asyncio
 from dataclasses import dataclass
 from decimal import Decimal
 
+import handoff_finance.engine as engine_module
+import handoff_finance.evaluate as evaluate_module
 from handoff_finance.engine import improve
-from handoff_finance.evaluate import EvaluationCase, score_case
+from handoff_finance.evaluate import EvaluationCase, _run_case, score_case
 from handoff_finance.fixtures import build_case
 from handoff_finance.model_client import OpenAIPlanner
 from handoff_finance.models import Decision, InvoiceDraft
@@ -202,6 +204,61 @@ def test_source_blocker_returns_review_without_spending_a_repair_call() -> None:
     assert decision.baseline_checks is not None
     assert decision.baseline_checks.review_reasons
     assert planner.repair_calls == 0
+
+
+def test_paired_repaired_latency_includes_the_reused_baseline(monkeypatch) -> None:
+    now = 0.0
+
+    def clock() -> float:
+        return now
+
+    baseline = build_case("showcase").proposed
+    repaired = _expected_invoice()
+
+    class Planner:
+        model = "fake-model"
+        usage = {}
+        call_usage = []
+
+        def __init__(self, *, model):
+            pass
+
+        async def initial(self, request):
+            nonlocal now
+            now += 0.041
+            return baseline
+
+        async def repair(self, request, baseline, checks):
+            nonlocal now
+            now += 0.059
+            return [repaired]
+
+    real_validate = evaluate_module.validate_invoice
+
+    def measured_validate(request, draft):
+        nonlocal now
+        result = real_validate(request, draft)
+        now += 0.007
+        return result
+
+    monkeypatch.setattr(evaluate_module, "OpenAIPlanner", Planner)
+    monkeypatch.setattr(evaluate_module, "monotonic", clock)
+    monkeypatch.setattr(evaluate_module, "validate_invoice", measured_validate)
+    monkeypatch.setattr(engine_module, "monotonic", clock)
+    case = EvaluationCase(
+        name="timed-showcase",
+        request=build_case("showcase").model_copy(update={"proposed": None}),
+        expected_disposition="create_invoice",
+        expected_invoice=repaired,
+        group="real_model",
+    )
+
+    result = asyncio.run(_run_case(case, model="fake-model"))
+
+    assert result["variants"]["original"]["decision"]["elapsed_ms"] == 41
+    assert result["variants"]["checked_only"]["decision"]["elapsed_ms"] == 48
+    assert result["variants"]["repaired"]["decision"]["elapsed_ms"] == 100
+    assert result["actual_execution"]["elapsed_ms"] == 107
 
 
 @dataclass

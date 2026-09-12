@@ -241,8 +241,12 @@ async def _run_case(case: EvaluationCase, *, model: str) -> dict:
             original = original.model_copy(update={"elapsed_ms": baseline_elapsed_ms})
             checks = validate_invoice(case.request, baseline)
             checked = _decision_from_baseline(case.request, baseline, checked=checks, usage=baseline_usage)
-            checked = checked.model_copy(update={"elapsed_ms": baseline_elapsed_ms})
+            checked_elapsed_ms = int((monotonic() - baseline_started) * 1000)
+            checked = checked.model_copy(update={"elapsed_ms": checked_elapsed_ms})
             repaired = await improve(case.request.model_copy(update={"proposed": baseline}), planner)
+            repaired = repaired.model_copy(
+                update={"elapsed_ms": baseline_elapsed_ms + repaired.elapsed_ms}
+            )
             variants = {"original": original, "checked_only": checked, "repaired": repaired}
 
         scores = {name: score_case(case, decision) for name, decision in variants.items()}
