@@ -7,7 +7,7 @@ from typing import Literal
 
 from dotenv import dotenv_values
 from openai import AsyncOpenAI
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from .models import GateResult, InvoiceDraft, InvoiceRequest
 
@@ -22,9 +22,9 @@ class _InvoiceDraftOutput(BaseModel):
     customer_id: str
     product_id: str
     currency: Literal["SGD", "USD"]
-    quantity: int
-    unit_price_minor: int
-    days_until_due: int
+    quantity: StrictInt = Field(ge=0)
+    unit_price_minor: StrictInt = Field(ge=0)
+    days_until_due: StrictInt = Field(ge=1, le=365)
     tax_percent: str
     po_number: str
     contract_id: str

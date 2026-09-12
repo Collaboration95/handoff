@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from handoff_finance.engine import improve
 from handoff_finance.fixtures import build_case, cases
-from handoff_finance.model_client import ModelOutputError, OpenAIPlanner
+from handoff_finance.model_client import ModelOutputError, OpenAIPlanner, _InvoiceDraftOutput
 from handoff_finance.models import Contract, InvoiceDraft
 from handoff_finance.rules import validate_invoice
 
@@ -41,8 +41,10 @@ def test_showcase_bills_six_units_at_latest_signed_price() -> None:
     ("changes", "failed_rule"),
     [
         ({"customer_id": "customer-wrong"}, "customer"),
+        ({"product_id": "product-wrong"}, "product"),
         ({"po_number": "PO-WRONG"}, "po_number"),
         ({"days_until_due": 60}, "days_until_due"),
+        ({"tax_percent": Decimal("8.5")}, "tax_percent"),
         ({"currency": "USD"}, "currency"),
         ({"quantity": 10}, "quantity"),
         ({"contract_id": "contract-old"}, "contract_id"),
@@ -79,6 +81,27 @@ def test_future_and_unsigned_amendments_do_not_override_effective_signed_contrac
     valid = replace(request.proposed, quantity=6, unit_price_minor=9_000, contract_id="contract-sep")
 
     assert validate_invoice(request, valid).valid is True
+
+
+def test_tax_rounds_half_minor_unit_up() -> None:
+    request = build_case("showcase")
+    latest = replace(request.contracts[-1], unit_price_minor=1, tax_percent=Decimal("50"))
+    fulfilment = replace(request.fulfilment, accepted_quantity=1, previously_invoiced_quantity=0)
+    draft = replace(
+        request.proposed,
+        quantity=1,
+        unit_price_minor=1,
+        tax_percent=Decimal("50"),
+        contract_id=latest.id,
+    )
+    request = replace(request, contracts=[request.contracts[0], latest], fulfilment=fulfilment)
+
+    result = validate_invoice(request, draft)
+
+    assert result.valid is True
+    assert result.subtotal_minor == 1
+    assert result.tax_minor == 1
+    assert result.total_minor == 2
 
 
 @pytest.mark.parametrize("name", ["conflicting_latest_contracts", "unaccepted_fulfilment"])
@@ -280,3 +303,39 @@ def test_model_adapter_rejects_missing_parsed_output() -> None:
 
     with pytest.raises(ModelOutputError):
         asyncio.run(planner.initial(request))
+
+
+@pytest.mark.parametrize(
+    ("field_name", "malformed"),
+    [
+        ("quantity", "6"),
+        ("quantity", True),
+        ("unit_price_minor", "9000"),
+        ("unit_price_minor", False),
+        ("days_until_due", "30"),
+        ("days_until_due", True),
+    ],
+)
+def test_model_wire_rejects_non_strict_integers(field_name: str, malformed: object) -> None:
+    payload = valid_draft(build_case("showcase")).model_dump(mode="json")
+    payload[field_name] = malformed
+
+    with pytest.raises(ValidationError):
+        _InvoiceDraftOutput.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid"),
+    [
+        ("quantity", -1),
+        ("unit_price_minor", -1),
+        ("days_until_due", 0),
+        ("days_until_due", 366),
+    ],
+)
+def test_model_wire_applies_domain_integer_bounds(field_name: str, invalid: int) -> None:
+    payload = valid_draft(build_case("showcase")).model_dump(mode="json")
+    payload[field_name] = invalid
+
+    with pytest.raises(ValidationError):
+        _InvoiceDraftOutput.model_validate(payload)
