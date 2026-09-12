@@ -2,6 +2,14 @@
 
 This local demo checks a proposed invoice against synthetic contract and fulfilment records, records exact human workflow approval, creates an Airwallex **sandbox draft**, and reports success only after readback verification. The existing LiveKit clients handle the meeting; the page on port 8000 is the approval and activity companion.
 
+## Evidence boundary
+
+The platform supplies the existing objective, proposed invoice, and supporting records through the strict `InvoiceRequest` contract. Handoff preserves the objective and checks execution against those records. The bundled contract amendments, delivery acceptance, and previous billing quantities are **platform-supplied synthetic fixtures**, not records fetched from a customer's ERP.
+
+A platform-hosted deployment can use records already available to that platform, including uploaded documents or existing integrations. If delivery acceptance or contract evidence is absent, Handoff cannot establish those facts and must request review. Connecting directly to customer systems remains a stretch goal. When only approved invoice parameters are available, the defensible check is whether the external draft matches those parameters.
+
+The injected error is an incorrect upstream invoice proposal: using the original order quantity and price instead of the supplied amendment and acceptance evidence. It is not an observed Airwallex backend error. Airwallex's [invoice API](https://www.airwallex.com/docs/api/billing/invoices) accepts line-item quantities and prices; its [contract-to-billing workflow](https://github.com/airwallex/airwallex-marketplace/blob/master/plugins/airwallex-agentos/skills/contract-to-billing/SKILL.md) already handles document extraction and review. This demo does not claim those capabilities are new.
+
 ## Install and configure
 
 Use Python 3.11 or newer from the repository root:
